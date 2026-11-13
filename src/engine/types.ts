@@ -92,18 +92,37 @@ export interface TrackedMap<K, V> {
   readonly size: number;
 }
 
+export type FlagValue = string | number | boolean | null;
+
+export interface FlagEntry {
+  readonly name: string;
+  readonly value: FlagValue;
+}
+
+export interface TrackedFlags {
+  set(name: string, value: FlagValue): this;
+  get(name: string): FlagValue | undefined;
+  delete(name: string): boolean;
+  clear(): void;
+}
+
+export interface ContainerOptions {
+  readonly raw?: boolean;
+}
+
 /**
  * Textbook-friendly helpers provided to each algorithm. Calling operations on
  * these collections records trace transitions and live container views
  * automatically without `yield`.
  */
 export interface SearchContext {
-  queue<T = NodeId>(label?: string): Queue<T>;
-  stack<T = NodeId>(label?: string): Stack<T>;
+  queue<T = NodeId>(label?: string, options?: ContainerOptions): Queue<T>;
+  stack<T = NodeId>(label?: string, options?: ContainerOptions): Stack<T>;
   priorityQueue<T = NodeId>(label?: string): PriorityQueue<T>;
-  set<T = NodeId>(label?: string): TrackedSet<T>;
-  map<K = NodeId, V = number>(label?: string): TrackedMap<K, V>;
+  set<T = NodeId>(label?: string, options?: ContainerOptions): TrackedSet<T>;
+  map<K = NodeId, V = number>(label?: string, options?: ContainerOptions): TrackedMap<K, V>;
   parentMap(label?: string): TrackedMap<NodeId, NodeId>;
+  flags(): TrackedFlags;
   reconstructPath(
     parent: Pick<TrackedMap<NodeId, NodeId>, 'get' | 'has'>,
     target: NodeId,
@@ -188,16 +207,18 @@ export interface AlgorithmEntry {
   readonly filePath: string;
 }
 
-export type ContainerKind = 'queue' | 'stack' | 'priority-queue' | 'set';
+export type ContainerKind = 'queue' | 'stack' | 'priority-queue' | 'set' | 'map';
 
 export interface ContainerInfo {
   readonly id: number;
   readonly kind: ContainerKind;
   readonly label: string;
+  readonly rawValues?: boolean;
 }
 
 export interface ContainerEntry {
   readonly value: unknown;
+  readonly mapValue?: unknown;
   readonly priority?: number;
   readonly seq?: number;
 }
@@ -235,7 +256,35 @@ export type ContainerOp =
       readonly containerId: number;
       readonly type: 'set-clear';
       readonly prevValues: readonly unknown[];
+    }
+  | {
+      readonly containerId: number;
+      readonly type: 'map-set';
+      readonly key: unknown;
+      readonly value: unknown;
+      readonly hadPrev: boolean;
+      readonly prevValue: unknown;
+    }
+  | {
+      readonly containerId: number;
+      readonly type: 'map-delete';
+      readonly key: unknown;
+      readonly prevValue: unknown;
+      readonly mutated: boolean;
+    }
+  | {
+      readonly containerId: number;
+      readonly type: 'map-clear';
+      readonly prevEntries: readonly (readonly [unknown, unknown])[];
     };
+
+export interface FlagDelta {
+  readonly name: string;
+  readonly hadPrev: boolean;
+  readonly prevValue: FlagValue | undefined;
+  readonly hasNext: boolean;
+  readonly nextValue: FlagValue | undefined;
+}
 
 export interface StateDelta {
   readonly node: NodeId;
@@ -252,6 +301,7 @@ export interface ParentDelta {
 export interface TraceStep {
   readonly stateDeltas: readonly StateDelta[];
   readonly parentDeltas: readonly ParentDelta[];
+  readonly flagDeltas: readonly FlagDelta[];
   readonly prevCurrent: NodeId;
   readonly nextCurrent: NodeId;
   readonly prevEdgeFrom: NodeId;

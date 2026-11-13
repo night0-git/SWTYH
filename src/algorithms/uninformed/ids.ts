@@ -26,22 +26,26 @@ export const meta: AlgorithmMeta = {
 
 export function search(problem: SearchProblem, ctx: SearchContext): NodeId[] | null {
   const stack = ctx.stack('Frontier');
+  const depths = ctx.stack<number>('Depth', { raw: true });
   const visited = ctx.set('Visited');
   const parent = ctx.parentMap();
-  const bestDepth = new Map<NodeId, number>();
+  const bestDepth = ctx.map<NodeId, number>();
+  const flags = ctx.flags();
 
   for (let limit = 0; limit < problem.nodeCount; limit += 1) {
     visited.clear();
     bestDepth.clear();
-    let cutoff = false;
+    flags.set('limit', limit);
+    flags.set('cutoff', false);
 
-    const depths: number[] = [0];
     bestDepth.set(problem.start, 0);
     stack.push(problem.start);
+    depths.push(0);
 
     while (!stack.isEmpty()) {
       const current = stack.pop()!;
       const depth = depths.pop()!;
+      flags.set('depth', depth);
       if (depth > (bestDepth.get(current) ?? Infinity)) continue;
       visited.add(current);
 
@@ -50,7 +54,7 @@ export function search(problem: SearchProblem, ctx: SearchContext): NodeId[] | n
       }
 
       if (depth >= limit) {
-        cutoff = true;
+        flags.set('cutoff', true);
         continue;
       }
 
@@ -60,13 +64,13 @@ export function search(problem: SearchProblem, ctx: SearchContext): NodeId[] | n
         if (depth + 1 < (bestDepth.get(neighbor) ?? Infinity)) {
           bestDepth.set(neighbor, depth + 1);
           parent.set(neighbor, current);
-          depths.push(depth + 1);
           stack.push(neighbor);
+          depths.push(depth + 1);
         }
       }
     }
 
-    if (!cutoff) break;
+    if (!flags.get('cutoff')) break;
   }
 
   return null;

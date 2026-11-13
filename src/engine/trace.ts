@@ -5,6 +5,9 @@ import {
   type ContainerKind,
   type ContainerOp,
   type ContainerState,
+  type FlagDelta,
+  type FlagEntry,
+  type FlagValue,
   type NodeId,
   type ParentDelta,
   type StateDelta,
@@ -28,11 +31,12 @@ function isValidNode(value: unknown, nodeCount: number): value is NodeId {
   );
 }
 
-type BeatKind = 'none' | 'push' | 'pop' | 'set' | 'parent' | 'current' | 'other';
+type BeatKind = 'none' | 'push' | 'pop' | 'set' | 'map' | 'parent' | 'flag' | 'clear' | 'current' | 'other';
 
 interface MutableTraceStep {
   stateDeltas: StateDelta[];
   parentDeltas: ParentDelta[];
+  flagDeltas: FlagDelta[];
   prevCurrent: NodeId;
   nextCurrent: NodeId;
   prevEdgeFrom: NodeId;
@@ -46,7 +50,7 @@ interface MutableTraceStep {
 type StepPayload = Omit<MutableTraceStep, 'lines'>;
 
 /**
- * Records node-state deltas, parent tree links, active edges, and container ops,
+ * Records node-state deltas, parent tree links, active edges, flags, and container ops,
  * coalescing adjacent bookkeeping ops on the same node into single textbook beats.
  */
 export class TraceRecorder {
@@ -56,6 +60,7 @@ export class TraceRecorder {
   private readonly seenExpanded: Uint8Array;
   private readonly maxEvents: number;
   private readonly containers: ContainerInfo[] = [];
+  private readonly containerRaw: boolean[] = [];
   private readonly steps: MutableTraceStep[] = [];
   private currentNode: NodeId = -1;
   private activeEdgeFrom: NodeId = -1;
@@ -93,9 +98,12 @@ export class TraceRecorder {
     }
   }
 
-  registerContainer(kind: ContainerKind, label: string): number {
+  registerContainer(kind: ContainerKind, label: string, rawValues = false): number {
     const id = this.containers.length;
-    this.containers.push({ id, kind, label });
+    this.containers.push(
+      rawValues ? { id, kind, label, rawValues: true } : { id, kind, label },
+    );
+    this.containerRaw.push(rawValues);
     return id;
   }
 
@@ -189,6 +197,7 @@ export class TraceRecorder {
       {
         stateDeltas: deltas,
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent,
         nextCurrent: node,
         prevEdgeFrom,
@@ -209,7 +218,8 @@ export class TraceRecorder {
     seq?: number,
   ): void {
     this.tick();
-    const validNode = isValidNode(value, this.working.length);
+    const isRaw = this.containerRaw[containerId] === true;
+    const validNode = !isRaw && isValidNode(value, this.working.length);
     const nodeId = validNode ? value : -1;
     const op: ContainerOp = {
       containerId,
@@ -218,14 +228,16 @@ export class TraceRecorder {
     };
 
     const last = this.steps[this.steps.length - 1];
-    const canMerge =
+    const canMergeNode =
       last !== undefined &&
       validNode &&
       this.lastBeatNode === nodeId &&
-      (this.lastBeatKind === 'set' || this.lastBeatKind === 'parent') &&
+      (this.lastBeatKind === 'set' ||
+        this.lastBeatKind === 'parent' ||
+        this.lastBeatKind === 'map') &&
       !last.containerOps.some((o) => o.type === 'push');
 
-    if (canMerge) {
+    if (canMergeNode) {
       this.applyStateChange(last.stateDeltas, nodeId, NodeState.Frontier);
       if (this.currentNode >= 0 && this.currentNode !== nodeId) {
         this.activeEdgeFrom = this.currentNode;
@@ -236,6 +248,18 @@ export class TraceRecorder {
       last.containerOps.push(op);
       this.appendCurrentLine(last.lines);
       this.lastBeatKind = 'push';
+      return;
+    }
+
+    const canMergeRaw =
+      isRaw &&
+      last !== undefined &&
+      this.lastBeatKind === 'push' &&
+      !last.containerOps.some((o) => o.containerId === containerId);
+
+    if (canMergeRaw) {
+      last.containerOps.push(op);
+      this.appendCurrentLine(last.lines);
       return;
     }
 
@@ -260,6 +284,7 @@ export class TraceRecorder {
       {
         stateDeltas: deltas,
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom,
@@ -268,7 +293,7 @@ export class TraceRecorder {
         nextEdgeTo,
         containerOps: [op],
       },
-      'push',
+      isRaw ? 'other' : 'push',
       nodeId,
     );
   }
@@ -280,10 +305,30 @@ export class TraceRecorder {
     seq?: number,
   ): void {
     this.tick();
+    const isRaw = this.containerRaw[containerId] === true;
+    const validNode = !isRaw && isValidNode(value, this.working.length);
+    const op: ContainerOp = {
+      containerId,
+      type: 'pop',
+      entry: { value, priority, seq },
+    };
+
+    const last = this.steps[this.steps.length - 1];
+    const canMergeRaw =
+      isRaw &&
+      last !== undefined &&
+      this.lastBeatKind === 'pop' &&
+      !last.containerOps.some((o) => o.containerId === containerId);
+
+    if (canMergeRaw) {
+      last.containerOps.push(op);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
+
     const deltas: StateDelta[] = [];
     const prevCurrent = this.currentNode;
     let nextCurrent = this.currentNode;
-    const validNode = isValidNode(value, this.working.length);
 
     if (validNode) {
       if (
@@ -308,21 +353,16 @@ export class TraceRecorder {
       {
         stateDeltas: deltas,
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent,
         nextCurrent,
         prevEdgeFrom,
         prevEdgeTo,
         nextEdgeFrom: -1,
         nextEdgeTo: -1,
-        containerOps: [
-          {
-            containerId,
-            type: 'pop',
-            entry: { value, priority, seq },
-          },
-        ],
+        containerOps: [op],
       },
-      'pop',
+      isRaw ? 'other' : 'pop',
       validNode ? value : -1,
     );
   }
@@ -340,7 +380,11 @@ export class TraceRecorder {
     };
 
     const last = this.steps[this.steps.length - 1];
-    if (last && this.lastBeatKind === 'set' && this.lastBeatNode === node) {
+    if (
+      last &&
+      (this.lastBeatKind === 'set' || this.lastBeatKind === 'map') &&
+      this.lastBeatNode === node
+    ) {
       last.parentDeltas.push(parentDelta);
       this.activeEdgeFrom = parent;
       this.activeEdgeTo = node;
@@ -359,6 +403,7 @@ export class TraceRecorder {
       {
         stateDeltas: [],
         parentDeltas: [parentDelta],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom,
@@ -376,7 +421,8 @@ export class TraceRecorder {
     this.tick();
     if (!mutated) return;
 
-    const validNode = isValidNode(value, this.working.length);
+    const isRaw = this.containerRaw[containerId] === true;
+    const validNode = !isRaw && isValidNode(value, this.working.length);
     const nodeId = validNode ? value : -1;
     const op: ContainerOp = {
       containerId,
@@ -403,6 +449,7 @@ export class TraceRecorder {
       {
         stateDeltas: [],
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom: this.activeEdgeFrom,
@@ -423,6 +470,7 @@ export class TraceRecorder {
       {
         stateDeltas: [],
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom: this.activeEdgeFrom,
@@ -446,10 +494,106 @@ export class TraceRecorder {
   recordSetClear(containerId: number, prevValues: readonly unknown[]): void {
     this.tick();
     if (prevValues.length === 0) return;
+    const op: ContainerOp = {
+      containerId,
+      type: 'set-clear',
+      prevValues,
+    };
+    const last = this.steps[this.steps.length - 1];
+    if (
+      last !== undefined &&
+      this.lastBeatKind === 'clear' &&
+      !last.containerOps.some((o) => o.containerId === containerId)
+    ) {
+      last.containerOps.push(op);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
     this.pushStep(
       {
         stateDeltas: [],
         parentDeltas: [],
+        flagDeltas: [],
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [op],
+      },
+      'clear',
+      -1,
+    );
+  }
+
+  recordMapSet(
+    containerId: number,
+    key: unknown,
+    value: unknown,
+    hadPrev: boolean,
+    prevValue: unknown,
+  ): void {
+    this.tick();
+    if (hadPrev && Object.is(prevValue, value)) return;
+
+    const isRaw = this.containerRaw[containerId] === true;
+    const validNode = !isRaw && isValidNode(key, this.working.length);
+    const nodeId = validNode ? key : -1;
+    const op: ContainerOp = {
+      containerId,
+      type: 'map-set',
+      key,
+      value,
+      hadPrev,
+      prevValue,
+    };
+
+    const last = this.steps[this.steps.length - 1];
+    const canMerge =
+      last !== undefined &&
+      validNode &&
+      this.lastBeatNode === nodeId &&
+      (this.lastBeatKind === 'set' || this.lastBeatKind === 'parent') &&
+      !last.containerOps.some((o) => o.containerId === containerId);
+
+    if (canMerge) {
+      last.containerOps.push(op);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
+
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas: [],
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [op],
+      },
+      'map',
+      nodeId,
+    );
+  }
+
+  recordMapDelete(
+    containerId: number,
+    key: unknown,
+    prevValue: unknown,
+    mutated: boolean,
+  ): void {
+    this.tick();
+    if (!mutated) return;
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom: this.activeEdgeFrom,
@@ -459,10 +603,172 @@ export class TraceRecorder {
         containerOps: [
           {
             containerId,
-            type: 'set-clear',
-            prevValues,
+            type: 'map-delete',
+            key,
+            prevValue,
+            mutated,
           },
         ],
+      },
+      'other',
+      -1,
+    );
+  }
+
+  recordMapClear(
+    containerId: number,
+    prevEntries: readonly (readonly [unknown, unknown])[],
+  ): void {
+    this.tick();
+    if (prevEntries.length === 0) return;
+    const op: ContainerOp = {
+      containerId,
+      type: 'map-clear',
+      prevEntries,
+    };
+    const last = this.steps[this.steps.length - 1];
+    if (
+      last !== undefined &&
+      this.lastBeatKind === 'clear' &&
+      !last.containerOps.some((o) => o.containerId === containerId)
+    ) {
+      last.containerOps.push(op);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas: [],
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [op],
+      },
+      'clear',
+      -1,
+    );
+  }
+
+  recordFlagSet(
+    name: string,
+    hadPrev: boolean,
+    prevValue: FlagValue | undefined,
+    nextValue: FlagValue,
+  ): void {
+    this.tick();
+    if (hadPrev && Object.is(prevValue, nextValue)) return;
+
+    const delta: FlagDelta = {
+      name,
+      hadPrev,
+      prevValue,
+      hasNext: true,
+      nextValue,
+    };
+
+    const last = this.steps[this.steps.length - 1];
+    if (
+      last !== undefined &&
+      !last.flagDeltas.some((d) => d.name === name) &&
+      (this.lastBeatKind === 'flag' ||
+        (this.lastBeatKind === 'pop' &&
+          !last.containerOps.some((o) => o.type === 'set-add')))
+    ) {
+      last.flagDeltas.push(delta);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
+
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas: [delta],
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [],
+      },
+      'flag',
+      -1,
+    );
+  }
+
+  recordFlagDelete(
+    name: string,
+    prevValue: FlagValue | undefined,
+    mutated: boolean,
+  ): void {
+    this.tick();
+    if (!mutated) return;
+
+    const delta: FlagDelta = {
+      name,
+      hadPrev: true,
+      prevValue,
+      hasNext: false,
+      nextValue: undefined,
+    };
+
+    const last = this.steps[this.steps.length - 1];
+    if (
+      last !== undefined &&
+      this.lastBeatKind === 'flag' &&
+      !last.flagDeltas.some((d) => d.name === name)
+    ) {
+      last.flagDeltas.push(delta);
+      this.appendCurrentLine(last.lines);
+      return;
+    }
+
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas: [delta],
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [],
+      },
+      'flag',
+      -1,
+    );
+  }
+
+  recordFlagClear(prevEntries: readonly (readonly [string, FlagValue])[]): void {
+    this.tick();
+    if (prevEntries.length === 0) return;
+    const flagDeltas: FlagDelta[] = prevEntries.map(([name, prevValue]) => ({
+      name,
+      hadPrev: true,
+      prevValue,
+      hasNext: false,
+      nextValue: undefined,
+    }));
+    this.pushStep(
+      {
+        stateDeltas: [],
+        parentDeltas: [],
+        flagDeltas,
+        prevCurrent: this.currentNode,
+        nextCurrent: this.currentNode,
+        prevEdgeFrom: this.activeEdgeFrom,
+        prevEdgeTo: this.activeEdgeTo,
+        nextEdgeFrom: this.activeEdgeFrom,
+        nextEdgeTo: this.activeEdgeTo,
+        containerOps: [],
       },
       'other',
       -1,
@@ -479,6 +785,7 @@ export class TraceRecorder {
       {
         stateDeltas: deltas,
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent: this.currentNode,
         nextCurrent: this.currentNode,
         prevEdgeFrom: this.activeEdgeFrom,
@@ -513,6 +820,7 @@ export class TraceRecorder {
       {
         stateDeltas: deltas,
         parentDeltas: [],
+        flagDeltas: [],
         prevCurrent,
         nextCurrent: -1,
         prevEdgeFrom,
@@ -608,6 +916,7 @@ class ShadowContainer {
   private readonly stackItems: ContainerEntry[] | null = null;
   private readonly pqDesc: ContainerEntry[] | null = null;
   private readonly setItems: Set<unknown> | null = null;
+  private readonly mapItems: Map<unknown, unknown> | null = null;
 
   constructor(info: ContainerInfo) {
     this.info = info;
@@ -624,6 +933,9 @@ class ShadowContainer {
       case 'set':
         this.setItems = new Set();
         break;
+      case 'map':
+        this.mapItems = new Map();
+        break;
     }
   }
 
@@ -632,6 +944,7 @@ class ShadowContainer {
     if (this.stackItems) this.stackItems.length = 0;
     if (this.pqDesc) this.pqDesc.length = 0;
     this.setItems?.clear();
+    this.mapItems?.clear();
   }
 
   applyForward(op: ContainerOp): void {
@@ -654,6 +967,15 @@ class ShadowContainer {
         break;
       case 'set-clear':
         this.setItems?.clear();
+        break;
+      case 'map-set':
+        this.mapItems?.set(op.key, op.value);
+        break;
+      case 'map-delete':
+        if (op.mutated) this.mapItems?.delete(op.key);
+        break;
+      case 'map-clear':
+        this.mapItems?.clear();
         break;
     }
   }
@@ -680,6 +1002,20 @@ class ShadowContainer {
         if (this.setItems) {
           for (const v of op.prevValues) {
             this.setItems.add(v);
+          }
+        }
+        break;
+      case 'map-set':
+        if (op.hadPrev) this.mapItems?.set(op.key, op.prevValue);
+        else this.mapItems?.delete(op.key);
+        break;
+      case 'map-delete':
+        if (op.mutated) this.mapItems?.set(op.key, op.prevValue);
+        break;
+      case 'map-clear':
+        if (this.mapItems) {
+          for (const [k, v] of op.prevEntries) {
+            this.mapItems.set(k, v);
           }
         }
         break;
@@ -711,6 +1047,16 @@ class ShadowContainer {
         entries[i] = this.pqDesc[this.pqDesc.length - 1 - i]!;
       }
       return { info: this.info, entries, size: this.pqDesc.length };
+    }
+
+    if (this.mapItems) {
+      const size = this.mapItems.size;
+      const entries: ContainerEntry[] = [];
+      for (const [k, v] of this.mapItems) {
+        entries.push({ value: k, mapValue: v });
+        if (entries.length >= limit) break;
+      }
+      return { info: this.info, entries, size };
     }
 
     const size = this.setItems?.size ?? 0;
@@ -769,6 +1115,7 @@ export class TracePlayer {
   activeEdgeFrom: NodeId = -1;
   activeEdgeTo: NodeId = -1;
   private readonly shadows: ShadowContainer[];
+  private readonly flags = new Map<string, FlagValue>();
   private _cursor = 0;
 
   constructor(trace: Trace) {
@@ -798,6 +1145,14 @@ export class TracePlayer {
     return this.shadows.map((s) => s.snapshot(limit));
   }
 
+  getFlags(): FlagEntry[] {
+    const out: FlagEntry[] = [];
+    for (const [name, value] of this.flags) {
+      out.push({ name, value });
+    }
+    return out;
+  }
+
   stepForward(count = 1): boolean {
     const target = Math.min(this.trace.length, this._cursor + count);
     if (target === this._cursor) return false;
@@ -824,6 +1179,13 @@ export class TracePlayer {
       for (const pd of step.parentDeltas) {
         this.parents[pd.node] = pd.nextParent;
       }
+      for (const fd of step.flagDeltas) {
+        if (fd.hasNext) {
+          this.flags.set(fd.name, fd.nextValue!);
+        } else {
+          this.flags.delete(fd.name);
+        }
+      }
       this.currentNode = step.nextCurrent;
       this.activeEdgeFrom = step.nextEdgeFrom;
       this.activeEdgeTo = step.nextEdgeTo;
@@ -844,6 +1206,14 @@ export class TracePlayer {
         const pd = step.parentDeltas[i]!;
         this.parents[pd.node] = pd.prevParent;
       }
+      for (let i = 0; i < step.flagDeltas.length; i += 1) {
+        const fd = step.flagDeltas[i]!;
+        if (fd.hadPrev) {
+          this.flags.set(fd.name, fd.prevValue!);
+        } else {
+          this.flags.delete(fd.name);
+        }
+      }
       this.currentNode = step.prevCurrent;
       this.activeEdgeFrom = step.prevEdgeFrom;
       this.activeEdgeTo = step.prevEdgeTo;
@@ -860,6 +1230,7 @@ export class TracePlayer {
     this.currentNode = -1;
     this.activeEdgeFrom = -1;
     this.activeEdgeTo = -1;
+    this.flags.clear();
     for (const shadow of this.shadows) {
       shadow.reset();
     }

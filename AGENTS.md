@@ -133,8 +133,9 @@ Every algorithm added under `src/algorithms/` **must** surface accurate compatib
 2. **Complete `meta` export & warnings:** Always export `meta: AlgorithmMeta` with accurate capability flags (`weighted`, `usesHeuristic`, `supportsNegativeWeights`, `requiresAdmissibleHeuristic`, `guaranteesOptimalUnweighted`), a Mechanism + Outcome `description`, and `checkCompatibility` if any incompatibility cannot be detected automatically.
 3. **Textbook clarity ("What we write is what they see"):** Use clean textbook names (`open`, `closed`, `queue`, `stack`, `parent`, `gScore`) and flat loops—remember the raw file renders verbatim in the UI.
 4. **Use instrumented `ctx` structures for flawless UI integration:**
-   - Use `ctx.queue(label?)`, `ctx.stack(label?)`, `ctx.priorityQueue(label?)`, and `ctx.set(label?)` so the live **State Containers** panel populates automatically with accurate step-by-step data.
-   - Use `ctx.parentMap()` for parent pointers (`parent.set(child, current)`) so graph and grid **search-tree edges** highlight automatically during traversal (keep score/cost maps in `ctx.map()`).
+   - Display **only textbook states** in the sidebar to avoid clutter. Use `ctx.queue(label?)`, `ctx.stack(label?)`, `ctx.priorityQueue(label?)`, `ctx.set(label?)`, and `ctx.flags()` for textbook containers and scalar/boolean flags (e.g., `limit`, `cutoff`).
+   - Pass `{ raw: true }` (e.g., `ctx.stack<number>('Depth', { raw: true })`) for non-node containers so raw scalars are displayed without coloring canvas nodes.
+   - Use `ctx.parentMap()` for parent pointers (`parent.set(child, current)`). Keep internal bookkeeping maps (`gScore`, `bestCost`, `bestDepth`) unlabeled in `ctx.map()` so they stay hidden; only pass a label to `ctx.map(label)` when the map itself is standard textbook state.
    - Check `problem.isGoal(current)` upon popping, return `ctx.reconstructPath(parent, current)` when found, and return `null` when exhausted.
 5. **Problem-agnostic by default:** Program against `problem.neighbors(u)`, `problem.isGoal(u)`, `problem.heuristic(u)`, and `problem.nodeCount` so every algorithm works seamlessly on both 2D grids and general graphs (unless strictly spatial, in which case check `problem.position(u)`).
 6. **Pure & resilient:** Never import React, DOM, or canvas modules inside `src/algorithms/`. `problem.isGoal()` and `problem.neighbors()` remain instrumented as fallback, and `runner.ts` stops infinite loops cleanly at `maxEvents`.
@@ -177,7 +178,7 @@ Algorithms do **not** need to be optimal or even correct—experimental or inten
 Every logical branch and hot path in UI handling must have automated test coverage in `src/test/`:
 1. **Editing during any replay state:** Painting/erasing walls, painting/clearing weights, moving Start/Goal, and dragging graph vertices while `player === null`, at `cursor === 0` (post-Reset), paused mid-replay (including when the new trace shrinks below `prevCursor`), at `End`, and while `playing === true`.
 2. **Rapid pointer bursts & StrictMode idempotency:** Sequential `grid-edit` / `move-vertex` dispatches must never drop cells or rely on stale closures, and `simulationReducer` must stay idempotent under React `<StrictMode>` double-invocation.
-3. **Trace & container reversibility:** Seeking forward, stepping `+1`/`-1`, scrubbing, and resetting must restore exact `states`, `parents`, `currentNode`, `activeEdge`, and live `Queue`/`Stack`/`PriorityQueue`/`Set` snapshots.
+3. **Trace & container reversibility:** Seeking forward, stepping `+1`/`-1`, scrubbing, and resetting must restore exact `states`, `parents`, `currentNode`, `activeEdge`, `Flags`, and live `Queue`/`Stack`/`PriorityQueue`/`Set`/`Map` snapshots.
 4. **Canvas interaction & mode switching:** `SearchCanvasRenderer.hitTest` / `screenToGraphPosition` bounds clamping, Grid↔Graph mode UI transitions, and global keyboard shortcuts ignoring focused `<select>`/`<input>` controls.
 
 When adding or modifying any UI control, pointer interaction, or replay transition, add or update tests covering every new branch before finishing.

@@ -501,4 +501,59 @@ describe('<App /> UI integration', () => {
     fireEvent.pointerLeave(canvas);
     expect(hoverEl.textContent).toBe('hover: drag vertex or click edge weight');
   });
+
+  it('displays only textbook sidebar state for A* and IDS (Depth stack + compact Flags row)', () => {
+    render(<App />);
+
+    // Default algorithm is A*: stepping shows Open [MIN-HEAP] and Closed [SET], without internal gScore clutter.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    const astarPanel = document.querySelector('.containers-panel')!;
+    expect(astarPanel.textContent).toContain('Open [MIN-HEAP]');
+    expect(astarPanel.textContent).toContain('Closed [SET]');
+    expect(astarPanel.textContent).not.toContain('gScore');
+    expect(astarPanel.querySelector('.flags-row')).toBeNull();
+
+    // Switch to IDS on Unweighted Network and step through pass 0.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'unweighted-graph' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Algorithm' }), {
+      target: { value: 'ids' },
+    });
+
+    // Step 1: Flags row shows limit: 0, cutoff: false in one compact line.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    const panel = document.querySelector('.containers-panel')!;
+    const flagsRow = panel.querySelector('.flags-row')!;
+    expect(flagsRow).toBeTruthy();
+    expect(flagsRow.textContent).toBe('limit: 0, cutoff: false');
+    expect(panel.textContent).toContain('Frontier [LIFO]');
+    expect(panel.textContent).toContain('Depth [LIFO]');
+    expect(panel.textContent).toContain('Visited [SET]');
+    expect(panel.textContent).not.toContain('Best Depth');
+
+    // Step 2: Start pushed onto Frontier (S) and Depth (0).
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    const depthBlock = Array.from(panel.querySelectorAll('.container-block')).find((el) =>
+      el.textContent?.includes('Depth [LIFO]'),
+    );
+    expect(depthBlock?.querySelector('.container-item')?.textContent).toBe('0');
+
+    // Step 3: Start popped -> depth: 0 appears in Flags.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    expect(panel.querySelector('.flags-row')?.textContent).toBe(
+      'limit: 0, cutoff: false, depth: 0',
+    );
+
+    // Step 4: depth >= limit (0 >= 0) -> cutoff becomes true in Flags with blue highlight.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    expect(panel.querySelector('.flags-row')?.textContent).toBe(
+      'limit: 0, cutoff: true, depth: 0',
+    );
+    expect(panel.querySelector('.flag-item.is-changed')?.textContent).toBe('cutoff: true');
+
+    // Reset clears Flags row cleanly.
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(panel.querySelector('.flags-row')).toBeNull();
+  });
 });

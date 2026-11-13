@@ -1,11 +1,13 @@
 import type { TraceRecorder } from './trace';
 import type {
+  FlagValue,
   NodeId,
   PriorityQueue,
   Queue,
   SearchContext,
   SearchProblem,
   Stack,
+  TrackedFlags,
   TrackedMap,
   TrackedSet,
 } from './types';
@@ -20,9 +22,9 @@ class InstrumentedQueue<T> implements Queue<T> {
   private readonly recorder: TraceRecorder;
   private readonly containerId: number;
 
-  constructor(recorder: TraceRecorder, label: string) {
+  constructor(recorder: TraceRecorder, label: string, rawValues = false) {
     this.recorder = recorder;
-    this.containerId = recorder.registerContainer('queue', label);
+    this.containerId = recorder.registerContainer('queue', label, rawValues);
   }
 
   push(item: T): void {
@@ -63,9 +65,9 @@ class InstrumentedStack<T> implements Stack<T> {
   private readonly recorder: TraceRecorder;
   private readonly containerId: number;
 
-  constructor(recorder: TraceRecorder, label: string) {
+  constructor(recorder: TraceRecorder, label: string, rawValues = false) {
     this.recorder = recorder;
-    this.containerId = recorder.registerContainer('stack', label);
+    this.containerId = recorder.registerContainer('stack', label, rawValues);
   }
 
   push(item: T): void {
@@ -200,9 +202,9 @@ class InstrumentedSet<T> implements TrackedSet<T> {
   private readonly recorder: TraceRecorder;
   private readonly containerId: number;
 
-  constructor(recorder: TraceRecorder, label: string) {
+  constructor(recorder: TraceRecorder, label: string, rawValues = false) {
     this.recorder = recorder;
-    this.containerId = recorder.registerContainer('set', label);
+    this.containerId = recorder.registerContainer('set', label, rawValues);
   }
 
   add(item: T): this {
@@ -237,16 +239,30 @@ class InstrumentedMap<K, V> implements TrackedMap<K, V> {
   private readonly inner = new Map<K, V>();
   private readonly recorder: TraceRecorder;
   private readonly trackParents: boolean;
+  private readonly containerId: number | null;
 
-  constructor(recorder: TraceRecorder, trackParents: boolean) {
+  constructor(
+    recorder: TraceRecorder,
+    trackParents: boolean,
+    label: string | null = null,
+    rawValues = false,
+  ) {
     this.recorder = recorder;
     this.trackParents = trackParents;
+    this.containerId =
+      !trackParents && label !== null
+        ? recorder.registerContainer('map', label, rawValues)
+        : null;
   }
 
   set(key: K, value: V): this {
+    const hadPrev = this.inner.has(key);
+    const prevValue = this.inner.get(key);
     this.inner.set(key, value);
     if (this.trackParents && isNodeId(key) && isNodeId(value)) {
       this.recorder.recordParent(key, value);
+    } else if (this.containerId !== null) {
+      this.recorder.recordMapSet(this.containerId, key, value, hadPrev, prevValue);
     } else {
       this.recorder.tick();
     }
@@ -262,15 +278,59 @@ class InstrumentedMap<K, V> implements TrackedMap<K, V> {
   }
 
   delete(key: K): boolean {
-    return this.inner.delete(key);
+    const prevValue = this.inner.get(key);
+    const mutated = this.inner.delete(key);
+    if (this.containerId !== null) {
+      this.recorder.recordMapDelete(this.containerId, key, prevValue, mutated);
+    }
+    return mutated;
   }
 
   clear(): void {
+    const prevEntries =
+      this.containerId !== null ? Array.from(this.inner.entries()) : [];
     this.inner.clear();
+    if (this.containerId !== null) {
+      this.recorder.recordMapClear(this.containerId, prevEntries);
+    }
   }
 
   get size(): number {
     return this.inner.size;
+  }
+}
+
+class InstrumentedFlags implements TrackedFlags {
+  private readonly inner = new Map<string, FlagValue>();
+  private readonly recorder: TraceRecorder;
+
+  constructor(recorder: TraceRecorder) {
+    this.recorder = recorder;
+  }
+
+  set(name: string, value: FlagValue): this {
+    const hadPrev = this.inner.has(name);
+    const prevValue = this.inner.get(name);
+    this.inner.set(name, value);
+    this.recorder.recordFlagSet(name, hadPrev, prevValue, value);
+    return this;
+  }
+
+  get(name: string): FlagValue | undefined {
+    return this.inner.get(name);
+  }
+
+  delete(name: string): boolean {
+    const prevValue = this.inner.get(name);
+    const mutated = this.inner.delete(name);
+    this.recorder.recordFlagDelete(name, prevValue, mutated);
+    return mutated;
+  }
+
+  clear(): void {
+    const prevEntries = Array.from(this.inner.entries());
+    this.inner.clear();
+    this.recorder.recordFlagClear(prevEntries);
   }
 }
 
@@ -279,17 +339,21 @@ export function createSearchContext(
   recorder: TraceRecorder,
 ): SearchContext {
   return {
-    queue: (label = 'Queue') => new InstrumentedQueue(recorder, label),
-    stack: (label = 'Stack') => new InstrumentedStack(recorder, label),
+    queue: (label = 'Queue', options) =>
+      new InstrumentedQueue(recorder, label, options?.raw),
+    stack: (label = 'Stack', options) =>
+      new InstrumentedStack(recorder, label, options?.raw),
     priorityQueue: (label = 'Priority Queue') =>
       new InstrumentedPriorityQueue(recorder, label),
-    set: (label = 'Visited') => new InstrumentedSet(recorder, label),
-    map: (label) =>
-      new InstrumentedMap(
-        recorder,
-        label ? label.toLowerCase().includes('parent') : false,
-      ),
-    parentMap: () => new InstrumentedMap(recorder, true),
+    set: (label = 'Visited', options) =>
+      new InstrumentedSet(recorder, label, options?.raw),
+    map: (label, options) => {
+      const trackParents = label ? label.toLowerCase().includes('parent') : false;
+      const containerLabel = !trackParents && label ? label : null;
+      return new InstrumentedMap(recorder, trackParents, containerLabel, options?.raw);
+    },
+    parentMap: () => new InstrumentedMap(recorder, true, null),
+    flags: () => new InstrumentedFlags(recorder),
     reconstructPath(parent, target) {
       const path: NodeId[] = [];
       const seen = new Set<NodeId>();

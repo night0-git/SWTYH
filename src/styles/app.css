@@ -345,8 +345,41 @@ button:disabled {
 .containers-panel {
   border-bottom: 1px solid var(--border-hairline);
   background: var(--bg-page);
-  max-height: 172px;
+  max-height: 220px;
   overflow: auto;
+}
+
+.flags-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  padding: 7px 14px;
+  background: var(--bg-surface);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-primary);
+}
+
+.flag-item {
+  padding: 1px 5px;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-page);
+  font-family: inherit;
+  color: var(--ink-primary);
+}
+
+.flag-sep {
+  white-space: pre;
+  color: var(--ink-secondary);
+}
+
+.flag-item.is-changed {
+  border-color: var(--accent);
+  background: var(--op-push-bg);
+  color: var(--op-push-ink);
+  font-weight: 600;
 }
 
 .containers-empty {

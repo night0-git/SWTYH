@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { syncContainersDom } from '../components/ContainerView';
 import { Grid2DProblem } from '../engine/gridProblem';
 import { buildPreset } from '../engine/presets';
+import { getAlgorithm } from '../engine/registry';
 import { runAlgorithm } from '../engine/runner';
 import { TracePlayer } from '../engine/trace';
-import type { NodeId, SearchContext, SearchProblem } from '../engine/types';
+import { NodeState, type NodeId, type SearchContext, type SearchProblem } from '../engine/types';
 
 describe('TracePlayer & ContainerView DOM sync', () => {
   it('renders empty prompt before playback and live Queue/Visited items during playback', () => {
@@ -200,5 +201,167 @@ describe('TracePlayer & ContainerView DOM sync', () => {
     }, graph);
     expect(cycleRes.error).toBeNull();
     expect(cycleRes.path).toEqual([1, 2]);
+  });
+
+  it('tracks Map containers, raw-value stacks, and compact Flags with full forward/backward reversibility', () => {
+    const host = document.createElement('div');
+    const graph = buildPreset('sample-graph', false);
+
+    const res = runAlgorithm((p, ctx) => {
+      const stack = ctx.stack('Frontier');
+      const depths = ctx.stack<number>('Depth', { raw: true });
+      const scores = ctx.map<NodeId, number>('gScore');
+      const flags = ctx.flags();
+
+      flags.set('limit', 1);
+      flags.set('cutoff', false);
+      scores.set(p.start, 0);
+      stack.push(p.start);
+      depths.push(0);
+
+      const cur = stack.pop()!;
+      const d = depths.pop()!;
+      flags.set('depth', d);
+
+      // Overwrite existing map key, delete, then clear; toggle flag to true then delete.
+      scores.set(p.start, 5);
+      scores.set(2, 22);
+      scores.delete(p.start);
+      flags.set('cutoff', true);
+      scores.clear();
+      flags.delete('depth');
+      flags.clear();
+      return [cur];
+    }, graph);
+
+    const player = new TracePlayer(res.trace);
+    const normalizeContainers = () =>
+      player.getContainers(30).map((c) =>
+        c.info.kind === 'map'
+          ? {
+              ...c,
+              entries: [...c.entries].sort((a, b) =>
+                String(a.value).localeCompare(String(b.value)),
+              ),
+            }
+          : c,
+      );
+    const snapshots: string[] = [];
+
+    for (let t = 0; t <= player.length; t += 1) {
+      player.seek(t);
+      snapshots.push(
+        JSON.stringify({
+          states: Array.from(player.states),
+          containers: normalizeContainers(),
+          flags: player.getFlags(),
+        }),
+      );
+    }
+
+    // Raw stack push/pop (0) must never mark node 0 (Start) or any other node as Frontier/Current via raw values.
+    player.seek(1);
+    syncContainersDom(host, player, graph);
+    expect(host.querySelector('.flags-row')?.textContent).toBe('limit: 1, cutoff: false');
+    expect(host.querySelectorAll('.flag-item.is-changed').length).toBe(2);
+
+    // Step 2: scores.set(S, 0) + stack.push(S) + depths.push(0) coalesced into one step.
+    player.seek(2);
+    syncContainersDom(host, player, graph);
+    expect(host.textContent).toContain('[MAP]');
+    expect(host.textContent).toContain('SET S:0');
+    expect(host.textContent).toContain('PUSH 0');
+    // Depth stack displays raw integer '0', not 'S'.
+    const depthBlock = Array.from(host.querySelectorAll('.container-block')).find((el) =>
+      el.textContent?.includes('Depth'),
+    );
+    expect(depthBlock?.querySelector('.container-item')?.textContent).toBe('0');
+
+    // Step 3: stack.pop() + depths.pop() + flags.set('depth', 0) coalesced into one step.
+    player.seek(3);
+    syncContainersDom(host, player, graph);
+    expect(host.querySelector('.flags-row')?.textContent).toBe(
+      'limit: 1, cutoff: false, depth: 0',
+    );
+    const depthBlockAfterPop = Array.from(host.querySelectorAll('.container-block')).find((el) =>
+      el.textContent?.includes('Depth'),
+    );
+    expect(depthBlockAfterPop?.textContent).toContain('POP 0');
+
+    // Verify cutoff: true gets blue .is-changed highlight on change.
+    player.seek(7);
+    syncContainersDom(host, player, graph);
+    const changedItems = Array.from(host.querySelectorAll('.flag-item.is-changed')).map(
+      (el) => el.textContent,
+    );
+    expect(changedItems).toEqual(['cutoff: true']);
+
+    // Scrub backwards step by step and confirm exact equality with forward pass.
+    for (let t = player.length; t >= 0; t -= 1) {
+      player.seek(t);
+      const now = JSON.stringify({
+        states: Array.from(player.states),
+        containers: normalizeContainers(),
+        flags: player.getFlags(),
+      });
+      expect(now).toBe(snapshots[t]);
+    }
+  });
+
+  it('keeps raw-value stacks isolated from canvas NodeState transitions', () => {
+    const grid = buildPreset('open-field', false) as Grid2DProblem;
+    const res = runAlgorithm((_p, ctx) => {
+      const rawStack = ctx.stack<number>('Depth', { raw: true });
+      rawStack.push(5);
+      rawStack.push(10);
+      rawStack.pop();
+      return null;
+    }, grid);
+
+    const player = new TracePlayer(res.trace);
+    const initial = Array.from(grid.initialStates());
+    for (let t = 0; t <= player.length; t += 1) {
+      player.seek(t);
+      expect(Array.from(player.states)).toEqual(initial);
+      expect(player.states[5]).toBe(NodeState.Unvisited);
+      expect(player.states[10]).toBe(NodeState.Unvisited);
+    }
+  });
+
+  it('exposes complete sidebar containers and reversible flags across all built-in algorithms', () => {
+    const graph = buildPreset('unweighted-graph', false);
+
+    const expectedContainers: Record<string, string[]> = {
+      bfs: ['Queue', 'Visited'],
+      dfs: ['Stack', 'Visited'],
+      ucs: ['Open', 'Closed'],
+      lcfs: ['Frontier', 'Closed'],
+      ids: ['Frontier', 'Depth', 'Visited'],
+      astar: ['Open', 'Closed'],
+      'greedy-best-first': ['Open', 'Visited'],
+    };
+
+    for (const [id, labels] of Object.entries(expectedContainers)) {
+      const entry = getAlgorithm(id)!;
+      const res = runAlgorithm(entry.search, graph);
+      expect(res.error).toBeNull();
+      expect(res.trace.containers.map((c) => c.label)).toEqual(labels);
+
+      const player = new TracePlayer(res.trace);
+      player.seek(player.length);
+      if (id === 'ids') {
+        const flags = player.getFlags();
+        expect(flags.map((f) => f.name)).toEqual(
+          expect.arrayContaining(['limit', 'cutoff', 'depth']),
+        );
+      }
+
+      // Reset restores empty containers and clears flags cleanly.
+      player.reset();
+      expect(player.getFlags()).toEqual([]);
+      for (const c of player.getContainers()) {
+        expect(c.size).toBe(0);
+      }
+    }
   });
 });
