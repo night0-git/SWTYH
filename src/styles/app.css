@@ -374,6 +374,7 @@ button:disabled {
   margin-bottom: 5px;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 16px;
 }
 
 .container-title-group {
@@ -394,12 +395,14 @@ button:disabled {
 }
 
 .container-op-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
   padding: 0 5px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  line-height: 1.5;
+  line-height: 1;
   text-transform: uppercase;
   border-radius: var(--radius);
 }
@@ -427,6 +430,7 @@ button:disabled {
   gap: 4px;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -446,6 +450,7 @@ button:disabled {
 .container-more,
 .container-none {
   padding: 1px 4px;
+  border: 1px solid transparent;
   color: var(--ink-muted);
 }
 
