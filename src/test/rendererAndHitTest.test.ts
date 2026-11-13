@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SearchCanvasRenderer } from '../canvas/renderer';
 import type { AdjacencyGraphProblem } from '../engine/graphProblem';
 import { Grid2DProblem } from '../engine/gridProblem';
@@ -143,5 +143,58 @@ describe('SearchCanvasRenderer hitTest, coordinate mapping, and rendering', () =
     });
     renderer.render(wGrid, wGrid.initialStates(), {});
     expect(renderer.edgeHitTest(wGrid, 100, 100)).toBeNull();
+  });
+
+  it('highlights outgoing neighbor edges and dashed rings only for currentNode during playback', () => {
+    const canvas = createSizedCanvas(688, 488);
+    const ctx = canvas.getContext('2d')!;
+    vi.spyOn(canvas, 'getContext').mockImplementation(
+      ((id: string) => (id === '2d' ? ctx : null)) as unknown as typeof canvas.getContext,
+    );
+    const renderer = new SearchCanvasRenderer(canvas);
+    const directed = buildPreset('directed-graph', false) as AdjacencyGraphProblem;
+
+    const dashSpy = vi.spyOn(ctx, 'setLineDash');
+    const arcCalls: { x: number; y: number; r: number; lineWidth: number; strokeStyle: string }[] = [];
+    const origArc = ctx.arc.bind(ctx);
+    vi.spyOn(ctx, 'arc').mockImplementation((x, y, r, start, end, ccw) => {
+      arcCalls.push({
+        x,
+        y,
+        r,
+        lineWidth: ctx.lineWidth,
+        strokeStyle: String(ctx.strokeStyle),
+      });
+      origArc(x, y, r, start, end, ccw);
+    });
+    const edgeWidths: number[] = [];
+    const origMoveTo = ctx.moveTo.bind(ctx);
+    vi.spyOn(ctx, 'moveTo').mockImplementation((x, y) => {
+      edgeWidths.push(ctx.lineWidth);
+      origMoveTo(x, y);
+    });
+
+    // 1) Hover alone (no currentNode) must NOT highlight neighbor edges or neighbor rings.
+    renderer.render(directed, directed.initialStates(), { hoverNode: 3 });
+
+    expect(arcCalls.filter((c) => c.lineWidth === 1.5 || c.lineWidth === 1.35)).toHaveLength(0);
+    expect(edgeWidths).not.toContain(2.25);
+    expect(edgeWidths).not.toContain(1.85);
+    expect(dashSpy).not.toHaveBeenCalledWith([3, 2.5]);
+
+    // 2) Playback currentNode=3 highlights outgoing neighbors 2 and 4 (NOT incoming 1).
+    // Vertex positions in [0..100] mapped to pad=44, span=600x400:
+    // v1=(34,22)->(248,132), v2=(34,78)->(248,356), v4=(58,78)->(392,356).
+    arcCalls.length = 0;
+    edgeWidths.length = 0;
+    dashSpy.mockClear();
+    renderer.render(directed, directed.initialStates(), { currentNode: 3 });
+
+    expect(dashSpy).toHaveBeenCalledWith([3, 2.5]);
+    expect(edgeWidths).toContain(1.85);
+    const playbackRings = arcCalls.filter((c) => c.lineWidth === 1.35);
+    expect(playbackRings.some((c) => Math.abs(c.x - 248) < 1 && Math.abs(c.y - 356) < 1)).toBe(true);
+    expect(playbackRings.some((c) => Math.abs(c.x - 392) < 1 && Math.abs(c.y - 356) < 1)).toBe(true);
+    expect(playbackRings.some((c) => Math.abs(c.x - 248) < 1 && Math.abs(c.y - 132) < 1)).toBe(false);
   });
 });

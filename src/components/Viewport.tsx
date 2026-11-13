@@ -52,6 +52,22 @@ const GRAPH_IDLE_HINTS: Record<GraphTool, string> = {
   'set-goal': 'hover: click vertex to move Goal',
 };
 
+function formatGraphNodeId(problem: SearchProblem, node: NodeId): string {
+  if (node === problem.start) return 'S';
+  if (node === problem.goal) return 'G';
+  return `#${node}`;
+}
+
+function formatGraphNeighbors(problem: SearchProblem, node: NodeId, limit = 6): string {
+  const edges = problem.neighbors(node);
+  if (edges.length === 0) return 'none';
+  const shown = edges.slice(0, limit).map((e) => formatGraphNodeId(problem, e.node));
+  if (edges.length > limit) {
+    return `[${shown.join(', ')}, +${edges.length - limit}]`;
+  }
+  return `[${shown.join(', ')}]`;
+}
+
 function formatHoverLabel(
   problem: SearchProblem,
   states: Uint8Array,
@@ -71,7 +87,8 @@ function formatHoverLabel(
     return `cell (${x}, ${y}) #${node} · ${stateName} · w:${w} · h:${h}`;
   }
   const h = problem.heuristic(node).toFixed(1);
-  return `vertex #${node} · ${stateName} · h:${h}`;
+  const neighbors = formatGraphNeighbors(problem, node);
+  return `vertex ${formatGraphNodeId(problem, node)} · ${stateName} · h:${h} · neighbors: ${neighbors}`;
 }
 
 interface ViewportProps {

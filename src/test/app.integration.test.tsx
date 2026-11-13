@@ -479,4 +479,26 @@ describe('<App /> UI integration', () => {
       cancelSpy.mockRestore();
     }
   });
+
+  it('displays outgoing graph neighbors in the hover status readout', () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'sample-graph' },
+    });
+
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    mockCanvasBox(canvas, 688, 488);
+    // Trigger layout sync in renderer by stepping once.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+
+    const hoverEl = document.querySelector('.hover-readout') as HTMLElement;
+    // Vertex 0 (Start) sits at (92, 244) on 688x488 and connects to #1, #2, #3.
+    fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
+    expect(hoverEl.textContent).toContain('vertex S ·');
+    expect(hoverEl.textContent).toContain('neighbors: [#1, #2, #3]');
+
+    fireEvent.pointerLeave(canvas);
+    expect(hoverEl.textContent).toBe('hover: drag vertex or click edge weight');
+  });
 });

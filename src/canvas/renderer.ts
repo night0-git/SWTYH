@@ -665,6 +665,19 @@ export class SearchCanvasRenderer {
     const activeFrom = options.activeEdgeFrom ?? -1;
     const activeTo = options.activeEdgeTo ?? -1;
 
+    const isValidGraphNode = (n: number | null | undefined): n is NodeId =>
+      typeof n === 'number' && n >= 0 && n < graph.nodeCount;
+    const neighborFocus = isValidGraphNode(currentNode) ? currentNode : -1;
+
+    const neighborNodes = new Set<NodeId>();
+    if (neighborFocus >= 0) {
+      for (const edge of graph.neighbors(neighborFocus)) {
+        if (edge.node !== neighborFocus && isValidGraphNode(edge.node)) {
+          neighborNodes.add(edge.node);
+        }
+      }
+    }
+
     const pathEdgeDir = new Set<string>();
     const pathEdgePair = new Set<string>();
     if (options.showPathLine && options.path && options.path.length > 1) {
@@ -683,7 +696,7 @@ export class SearchCanvasRenderer {
     }
     const labelDraws: LabelDraw[] = [];
 
-    // Pass 1: Draw edges in 3 calm layers: baseline -> tree history -> active/path.
+    // Pass 1: Draw edges in layered priority: baseline -> neighbor/tree -> active/path.
     for (const e of edges) {
       const { u, v, pu, pv, ctrlX, ctrlY, curved } = e;
       const isPath = graph.directed
@@ -693,6 +706,9 @@ export class SearchCanvasRenderer {
         ? activeFrom === u && activeTo === v
         : (activeFrom === u && activeTo === v) ||
           (activeFrom === v && activeTo === u);
+      const isNeighborEdge =
+        neighborFocus >= 0 &&
+        (graph.directed ? u === neighborFocus : u === neighborFocus || v === neighborFocus);
 
       let treeFrom = -1;
       let treeTo = -1;
@@ -760,6 +776,23 @@ export class SearchCanvasRenderer {
           radius + 2,
           7.5,
         );
+        highlightColor = this.palette.inkSecondary;
+      } else if (isNeighborEdge) {
+        ctx.strokeStyle = this.palette.borderStrong;
+        ctx.fillStyle = this.palette.borderStrong;
+        ctx.lineWidth = 1.85;
+        strokeEdgeCurve(ctx, pu, pv, ctrlX, ctrlY, curved);
+        if (graph.directed) {
+          drawArrowHead(
+            ctx,
+            curved ? ctrlX : pu.x,
+            curved ? ctrlY : pu.y,
+            pv.x,
+            pv.y,
+            radius + 2,
+            7,
+          );
+        }
         highlightColor = this.palette.inkSecondary;
       } else {
         ctx.strokeStyle = this.palette.gridLine;
@@ -842,6 +875,7 @@ export class SearchCanvasRenderer {
       const state = states[u] ?? NodeState.Unvisited;
       const isHovered = options.hoverNode === u;
       const isDragged = options.dragNode === u;
+      const isNeighbor = neighborNodes.has(u);
       const needsCurrentRing =
         currentNode === u && (state === NodeState.Start || state === NodeState.Goal);
 
@@ -859,6 +893,15 @@ export class SearchCanvasRenderer {
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, radius + (needsCurrentRing ? 6.5 : 4), 0, Math.PI * 2);
         ctx.stroke();
+      } else if (isNeighbor) {
+        ctx.save();
+        ctx.strokeStyle = this.palette.borderStrong;
+        ctx.lineWidth = 1.35;
+        ctx.setLineDash([3, 2.5]);
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, radius + (needsCurrentRing ? 6.5 : 3.5), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
       }
 
       ctx.fillStyle = colors[state] ?? this.palette.surface;
