@@ -194,7 +194,7 @@ describe('instrumentAlgorithmSource and runtime TraceStep.lines', () => {
 
   it('extracts clean source and traces valid line numbers for all built-in algorithms', () => {
     const graph = buildPreset('sample-graph', false);
-    for (const id of ['astar', 'bfs', 'dfs', 'ucs', 'lcfs', 'ids']) {
+    for (const id of ['astar', 'greedy-best-first', 'bfs', 'dfs', 'ucs', 'lcfs', 'ids']) {
       const entry = getAlgorithm(id)!;
       expect(entry).toBeTruthy();
       const extracted = extractAlgorithmCode(entry.source);

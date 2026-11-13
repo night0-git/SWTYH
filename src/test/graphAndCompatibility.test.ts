@@ -268,5 +268,45 @@ describe('Compatibility analyzer and ground-truth optimality warnings', () => {
       'step-budget-risk',
     );
     expect(runAlgorithm(ids.search, blankUnreachable).path).toBeNull();
+
+    // 6. Greedy Best-First Search: expands by h(n), finds valid paths, warns on non-optimality, weights, and missing coordinates.
+    const gbfs = getAlgorithm('greedy-best-first')!;
+    expect(gbfs).toBeTruthy();
+    const gbfsConcave = runAlgorithm(gbfs.search, buildPreset('concave-trap', false));
+    expect(gbfsConcave.error).toBeNull();
+    expect(gbfsConcave.path).toBeTruthy();
+    expect(gbfsConcave.path?.[0]).toBe(buildPreset('concave-trap', false).start);
+    expect(gbfsConcave.path?.[gbfsConcave.path.length - 1]).toBe(
+      buildPreset('concave-trap', false).goal,
+    );
+
+    const gbfsUnweighted = runAlgorithm(gbfs.search, unweighted);
+    expect(gbfsUnweighted.error).toBeNull();
+    expect(gbfsUnweighted.path).toBeTruthy();
+    expect(
+      evaluateCompatibility(gbfs, unweighted, gbfsUnweighted).warnings.map((w) => w.code),
+    ).toContain('non-optimal-strategy');
+
+    const gbfsWeighted = runAlgorithm(gbfs.search, weightedGraph);
+    expect(gbfsWeighted.error).toBeNull();
+    expect(
+      evaluateCompatibility(gbfs, weightedGraph, gbfsWeighted).warnings.map((w) => w.code),
+    ).toEqual(expect.arrayContaining(['ignores-weights', 'non-optimal-strategy']));
+
+    const gbfsNegative = evaluateCompatibility(gbfs, negativeGraph, null);
+    expect(gbfsNegative.warnings.map((w) => w.code)).toContain('negative-weights');
+
+    const coordless = new AdjacencyGraphProblem({
+      nodeCount: 2,
+      start: 0,
+      goal: 1,
+      adjacency: [[{ node: 1, cost: 5 }], []],
+      directed: true,
+      weighted: true,
+    });
+    expect(evaluateCompatibility(gbfs, coordless, null).warnings.map((w) => w.code)).toContain(
+      'no-positions-heuristic',
+    );
+    expect(runAlgorithm(gbfs.search, blankUnreachable).path).toBeNull();
   });
 });
