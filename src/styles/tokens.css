@@ -1,0 +1,52 @@
+/*
+ * Technical Textbook / Swiss Grid Design Tokens
+ * Edit this file alone to tweak colors, typography, spacing, or canvas states.
+ */
+:root {
+  /* Surfaces & Ink */
+  --bg-page: #f5f4ef;
+  --bg-surface: #fcfbf8;
+  --bg-subtle: #ebe8e0;
+  --ink-primary: #141413;
+  --ink-secondary: #4e4d48;
+  --ink-muted: #7d7b73;
+  --border-hairline: #d4d0c5;
+  --border-strong: #8d8a80;
+  --accent: #1d4ed8;
+  --accent-ink: #fcfbf8;
+
+  /* Canvas Node State Palette */
+  --state-unvisited: #fcfbf8;
+  --state-wall: #1f1f1c;
+  --state-weight-low: #f6eed9;
+  --state-weight: #efe3c2;
+  --state-weight-high: #e2cc92;
+  --state-weight-ink: #7d6118;
+  --state-start: #167a3e;
+  --state-goal: #b82121;
+  --state-frontier: #9dc3f7;
+  --state-visited: #dde4ed;
+  --state-current: #e69100;
+  --state-path: #2563eb;
+  --state-path-line: #0f2c80;
+  --grid-line: #e2dfd5;
+
+  /* Container Op Badges & Active Code Line */
+  --op-push-bg: #dbeafe;
+  --op-push-border: #1d4ed8;
+  --op-push-ink: #1e3a8a;
+  --op-pop-bg: #fef3c7;
+  --op-pop-border: #d97706;
+  --op-pop-ink: #92400e;
+  --code-active-bg: #fef3c7;
+  --code-active-border: #d97706;
+
+  /* Typography */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
+
+  /* Layout & Geometry */
+  --radius: 0px;
+  --topbar-height: 42px;
+  --sidebar-width: 440px;
+}
