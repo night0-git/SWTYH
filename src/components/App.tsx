@@ -142,6 +142,24 @@ export function App() {
     dispatch({ type: 'playback-complete', cursor });
   }, []);
 
+  const handleToggleSkipIntermediate = useCallback(() => {
+    const active = playerRef.current;
+    dispatch({
+      type: 'toggle-skip-intermediate',
+      currentCursor: active ? active.cursor : 0,
+      wasAtEnd: active ? active.isAtEnd : false,
+    });
+  }, []);
+
+  const handleToggleGridTree = useCallback(() => {
+    const active = playerRef.current;
+    dispatch({
+      type: 'toggle-grid-tree',
+      currentCursor: active ? active.cursor : 0,
+      wasAtEnd: active ? active.isAtEnd : false,
+    });
+  }, []);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -288,6 +306,15 @@ export function App() {
               </button>
             )}
           </div>
+
+          <label className="topbar-checkbox">
+            <input
+              type="checkbox"
+              checked={state.skipIntermediateSteps}
+              onChange={handleToggleSkipIntermediate}
+            />
+            <span>Skip intermediate steps</span>
+          </label>
         </div>
 
         <div className="topbar-tools">
@@ -346,7 +373,7 @@ export function App() {
               <button
                 type="button"
                 className={state.showGridTree ? 'is-active' : undefined}
-                onClick={() => dispatch({ type: 'toggle-grid-tree' })}
+                onClick={handleToggleGridTree}
               >
                 Tree
               </button>

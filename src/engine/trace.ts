@@ -1237,3 +1237,148 @@ export class TracePlayer {
     this._cursor = 0;
   }
 }
+
+export interface VisualFilterOptions {
+  readonly includeParents?: boolean;
+  readonly includeActiveEdge?: boolean;
+}
+
+/** Returns true if applying `step` changes anything visually on the canvas. */
+export function stepHasVisualChange(
+  step: TraceStep,
+  options: VisualFilterOptions = {},
+): boolean {
+  return (
+    step.stateDeltas.length > 0 ||
+    step.prevCurrent !== step.nextCurrent ||
+    (Boolean(options.includeParents) &&
+      step.parentDeltas.some((pd) => pd.prevParent !== pd.nextParent)) ||
+    (Boolean(options.includeActiveEdge) &&
+      (step.prevEdgeFrom !== step.nextEdgeFrom ||
+        step.prevEdgeTo !== step.nextEdgeTo))
+  );
+}
+
+function mergeTraceSteps(
+  group: readonly TraceStep[],
+  linesFrom: TraceStep,
+): TraceStep {
+  if (group.length === 1) return group[0]!;
+  const first = group[0]!;
+  const last = group[group.length - 1]!;
+  const flagMap = new Map<string, FlagDelta>();
+
+  for (const s of group) {
+    for (const fd of s.flagDeltas) {
+      const prev = flagMap.get(fd.name);
+      flagMap.set(
+        fd.name,
+        prev ? { ...fd, hadPrev: prev.hadPrev, prevValue: prev.prevValue } : fd,
+      );
+    }
+  }
+
+  const flagDeltas = Array.from(flagMap.values()).filter(
+    (fd) =>
+      (fd.hadPrev || fd.hasNext) &&
+      !(fd.hadPrev && fd.hasNext && Object.is(fd.prevValue, fd.nextValue)),
+  );
+
+  let lines = linesFrom.lines;
+  for (let i = group.length - 1; lines.length === 0 && i >= 0; i -= 1) {
+    lines = group[i]!.lines;
+  }
+
+  return {
+    stateDeltas: group.flatMap((s) => s.stateDeltas),
+    parentDeltas: group.flatMap((s) => s.parentDeltas),
+    flagDeltas,
+    prevCurrent: first.prevCurrent,
+    nextCurrent: last.nextCurrent,
+    prevEdgeFrom: first.prevEdgeFrom,
+    prevEdgeTo: first.prevEdgeTo,
+    nextEdgeFrom: last.nextEdgeFrom,
+    nextEdgeTo: last.nextEdgeTo,
+    containerOps: group.flatMap((s) => s.containerOps),
+    lines,
+  };
+}
+
+/**
+ * Collapses intermediate non-visual steps into adjacent visual steps so only
+ * steps with canvas visual changes are registered as replay steps.
+ */
+export function compactVisualTrace(
+  trace: Trace,
+  options: VisualFilterOptions = {},
+): Trace {
+  if (trace.steps.length === 0) return trace;
+
+  const outSteps: TraceStep[] = [];
+  let pending: TraceStep[] = [];
+
+  for (const step of trace.steps) {
+    pending.push(step);
+    if (stepHasVisualChange(step, options)) {
+      outSteps.push(mergeTraceSteps(pending, step));
+      pending = [];
+    }
+  }
+
+  if (pending.length > 0 && outSteps.length > 0) {
+    const lastVisual = outSteps[outSteps.length - 1]!;
+    outSteps[outSteps.length - 1] = mergeTraceSteps(
+      [lastVisual, ...pending],
+      lastVisual,
+    );
+  }
+
+  return {
+    initial: trace.initial,
+    containers: trace.containers,
+    steps: outSteps,
+    length: outSteps.length,
+  };
+}
+
+/**
+ * Maps a cursor in a raw trace to the equivalent visual-step cursor in a
+ * compacted trace so toggling preserves the current canvas state.
+ */
+export function rawCursorToVisualCursor(
+  rawTrace: Trace,
+  rawCursor: number,
+  options: VisualFilterOptions = {},
+): number {
+  const limit = Math.max(0, Math.min(rawCursor | 0, rawTrace.steps.length));
+  let visualCount = 0;
+  for (let i = 0; i < limit; i += 1) {
+    if (stepHasVisualChange(rawTrace.steps[i]!, options)) {
+      visualCount += 1;
+    }
+  }
+  return visualCount;
+}
+
+/**
+ * Maps a visual-step cursor in a compacted trace back to the raw trace cursor
+ * immediately after that visual step.
+ */
+export function visualCursorToRawCursor(
+  rawTrace: Trace,
+  visualCursor: number,
+  options: VisualFilterOptions = {},
+): number {
+  const target = visualCursor | 0;
+  if (target <= 0) return 0;
+  let visualCount = 0;
+  for (let i = 0; i < rawTrace.steps.length; i += 1) {
+    if (stepHasVisualChange(rawTrace.steps[i]!, options)) {
+      visualCount += 1;
+      if (visualCount === target) {
+        return i + 1;
+      }
+    }
+  }
+  return rawTrace.steps.length;
+}

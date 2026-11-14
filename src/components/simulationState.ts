@@ -3,13 +3,20 @@ import { Grid2DProblem } from '../engine/gridProblem';
 import { buildPreset, type PresetId } from '../engine/presets';
 import { algorithms, getAlgorithm } from '../engine/registry';
 import { runAlgorithm } from '../engine/runner';
-import { TracePlayer } from '../engine/trace';
+import {
+  compactVisualTrace,
+  rawCursorToVisualCursor,
+  TracePlayer,
+  visualCursorToRawCursor,
+  type VisualFilterOptions,
+} from '../engine/trace';
 import type {
   AlgorithmEntry,
   NodeId,
   Point2D,
   RunResult,
   SearchProblem,
+  Trace,
 } from '../engine/types';
 
 export type DrawTool = 'wall' | 'weight' | 'erase';
@@ -40,6 +47,7 @@ export interface SimulationState {
   readonly presetId: PresetId;
   readonly allowDiagonal: boolean;
   readonly showGridTree: boolean;
+  readonly skipIntermediateSteps: boolean;
   readonly problem: SearchProblem;
   readonly drawTool: DrawTool;
   readonly weightBrush: WeightBrush;
@@ -59,7 +67,16 @@ export type SimulationAction =
   | { readonly type: 'regen-maze' }
   | { readonly type: 'clear-grid' }
   | { readonly type: 'toggle-diagonal' }
-  | { readonly type: 'toggle-grid-tree' }
+  | {
+      readonly type: 'toggle-grid-tree';
+      readonly currentCursor?: number;
+      readonly wasAtEnd?: boolean;
+    }
+  | {
+      readonly type: 'toggle-skip-intermediate';
+      readonly currentCursor?: number;
+      readonly wasAtEnd?: boolean;
+    }
   | { readonly type: 'set-draw-tool'; readonly tool: DrawTool }
   | { readonly type: 'set-weight-brush'; readonly brush: WeightBrush }
   | { readonly type: 'set-graph-tool'; readonly tool: GraphTool }
@@ -183,6 +200,7 @@ export function createInitialSimulationState(): SimulationState {
     presetId: 'concave-trap',
     allowDiagonal: false,
     showGridTree: false,
+    skipIntermediateSteps: false,
     problem: buildPreset('concave-trap', false),
     drawTool: 'wall',
     weightBrush: 5,
@@ -196,6 +214,29 @@ export function createInitialSimulationState(): SimulationState {
   };
 }
 
+function visualFilterFor(
+  problem: SearchProblem,
+  showGridTree: boolean,
+): VisualFilterOptions {
+  return {
+    includeParents: problem.kind === 'graph' || showGridTree,
+    includeActiveEdge: problem.kind === 'graph',
+  };
+}
+
+function buildPlayer(
+  trace: Trace,
+  problem: SearchProblem,
+  skipIntermediateSteps: boolean,
+  showGridTree: boolean,
+): TracePlayer {
+  return new TracePlayer(
+    skipIntermediateSteps
+      ? compactVisualTrace(trace, visualFilterFor(problem, showGridTree))
+      : trace,
+  );
+}
+
 function ensureExecuted(state: SimulationState): {
   runResult: RunResult;
   player: TracePlayer;
@@ -206,8 +247,58 @@ function ensureExecuted(state: SimulationState): {
   const selected = resolveSelectedAlgorithm(state.selectedId);
   if (!selected) return null;
   const runResult = runAlgorithm(selected.search, state.problem);
-  const player = new TracePlayer(runResult.trace);
+  const player = buildPlayer(
+    runResult.trace,
+    state.problem,
+    state.skipIntermediateSteps,
+    state.showGridTree,
+  );
   return { runResult, player };
+}
+
+function refreshPlayerFromTrace(
+  prevState: SimulationState,
+  nextState: SimulationState,
+  currentCursor: number,
+  wasAtEnd: boolean,
+): SimulationState {
+  if (!prevState.runResult || !prevState.player) return nextState;
+  const rawTrace = prevState.runResult.trace;
+  const nextPlayer = buildPlayer(
+    rawTrace,
+    nextState.problem,
+    nextState.skipIntermediateSteps,
+    nextState.showGridTree,
+  );
+
+  let nextCursor: number;
+  if (wasAtEnd) {
+    nextCursor = nextPlayer.length;
+  } else {
+    const rawCursor = prevState.skipIntermediateSteps
+      ? visualCursorToRawCursor(
+          rawTrace,
+          currentCursor,
+          visualFilterFor(prevState.problem, prevState.showGridTree),
+        )
+      : Math.max(0, Math.min(currentCursor, rawTrace.length));
+    nextCursor = nextState.skipIntermediateSteps
+      ? rawCursorToVisualCursor(
+          rawTrace,
+          rawCursor,
+          visualFilterFor(nextState.problem, nextState.showGridTree),
+        )
+      : rawCursor;
+  }
+
+  nextPlayer.seek(nextCursor);
+  return {
+    ...nextState,
+    player: nextPlayer,
+    cursor: nextCursor,
+    playing: prevState.playing && nextPlayer.length > 0 && !nextPlayer.isAtEnd,
+    renderTick: prevState.renderTick + 1,
+  };
 }
 
 function recomputeAfterProblemChange(
@@ -239,7 +330,12 @@ function recomputeAfterProblemChange(
   }
 
   const nextRun = runAlgorithm(selected.search, nextProblem);
-  const nextPlayer = new TracePlayer(nextRun.trace);
+  const nextPlayer = buildPlayer(
+    nextRun.trace,
+    nextProblem,
+    state.skipIntermediateSteps,
+    state.showGridTree,
+  );
   const nextCursor = wasAtEnd
     ? nextPlayer.length
     : Math.max(0, Math.min(currentCursor, nextPlayer.length));
@@ -362,11 +458,34 @@ export function simulationReducer(
       };
     }
 
-    case 'toggle-grid-tree':
-      return {
+    case 'toggle-grid-tree': {
+      const nextState: SimulationState = {
         ...state,
         showGridTree: !state.showGridTree,
       };
+      if (state.skipIntermediateSteps && state.problem.kind === 'grid' && state.player) {
+        return refreshPlayerFromTrace(
+          state,
+          nextState,
+          action.currentCursor ?? state.player.cursor,
+          action.wasAtEnd ?? state.player.isAtEnd,
+        );
+      }
+      return nextState;
+    }
+
+    case 'toggle-skip-intermediate': {
+      const nextState: SimulationState = {
+        ...state,
+        skipIntermediateSteps: !state.skipIntermediateSteps,
+      };
+      return refreshPlayerFromTrace(
+        state,
+        nextState,
+        action.currentCursor ?? state.player?.cursor ?? 0,
+        action.wasAtEnd ?? state.player?.isAtEnd ?? false,
+      );
+    }
 
     case 'set-draw-tool':
       return {

@@ -556,4 +556,50 @@ describe('<App /> UI integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
     expect(panel.querySelector('.flags-row')).toBeNull();
   });
+
+  it('places Skip intermediate steps checkbox on the right of the upmost row and filters non-visual steps', () => {
+    render(<App />);
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: 'Skip intermediate steps',
+    }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    expect(checkbox.closest('.topbar-main')).toBeTruthy();
+
+    // Switch to IDS on Unweighted Network where non-visual flag/clear/push steps are numerous.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'unweighted-graph' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Algorithm' }), {
+      target: { value: 'ids' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    const fullCounter = screen.getByText(/^\d+ \/ \d+$/).textContent!;
+    const [fullCur, fullTotal] = fullCounter.split(' / ').map(Number);
+    expect(fullCur).toBe(fullTotal);
+
+    // Ticking Skip intermediate steps at End recomputes trace and stays pinned to End with fewer steps.
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+    const skippedCounter = screen.getByText(/^\d+ \/ \d+$/).textContent!;
+    const [skipCur, skipTotal] = skippedCounter.split(' / ').map(Number);
+    expect(skipCur).toBe(skipTotal);
+    expect(skipTotal).toBeGreaterThan(0);
+    expect(skipTotal!).toBeLessThan(fullTotal!);
+
+    // Reset and step +1: first replay step already pops S (first visual change) while preserving Flags.
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    expect(screen.getByText(`1 / ${skipTotal}`)).toBeTruthy();
+    const panel = document.querySelector('.containers-panel')!;
+    expect(panel.querySelector('.flags-row')?.textContent).toBe(
+      'limit: 0, cutoff: false, depth: 0',
+    );
+
+    // Unticking Skip intermediate steps mid-replay maps cursor back to the equivalent raw step (step 3 in IDS).
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    expect(screen.getByText(`3 / ${fullTotal}`)).toBeTruthy();
+  });
 });

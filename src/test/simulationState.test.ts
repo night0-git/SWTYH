@@ -416,4 +416,79 @@ describe('simulationReducer replay & editing hot paths', () => {
     expect(s.cursor).toBe(0);
     expect(s.playing).toBe(false);
   });
+
+  it('handles toggle-skip-intermediate and tree interaction across all replay states', () => {
+    let s = createInitialSimulationState();
+    expect(s.skipIntermediateSteps).toBe(false);
+
+    // Toggle before run (player === null) only flips the flag without running.
+    s = simulationReducer(s, { type: 'toggle-skip-intermediate' });
+    expect(s.skipIntermediateSteps).toBe(true);
+    expect(s.player).toBeNull();
+
+    // Step 1 immediately sets currentNode to start (skipping initial open.push(start)).
+    s = simulationReducer(s, { type: 'step', delta: 1, currentCursor: 0 });
+    expect(s.player).not.toBeNull();
+    expect(s.player!.cursor).toBe(1);
+    expect(s.player!.currentNode).toBe(s.problem.start);
+    const skippedLength = s.player!.length;
+
+    // Jump to End, then untoggle Skip intermediate steps -> stays at End with longer trace.
+    s = simulationReducer(s, { type: 'jump-end' });
+    expect(s.player!.isAtEnd).toBe(true);
+    s = simulationReducer(s, {
+      type: 'toggle-skip-intermediate',
+      currentCursor: s.player!.cursor,
+      wasAtEnd: true,
+    });
+    expect(s.skipIntermediateSteps).toBe(false);
+    expect(s.player!.isAtEnd).toBe(true);
+    expect(s.player!.length).toBeGreaterThan(skippedLength);
+
+    // Mid-replay toggle while playing preserves exact canvas state and remains StrictMode idempotent.
+    s = simulationReducer(s, { type: 'scrub', cursor: 5 });
+    s = simulationReducer(s, { type: 'play-toggle', currentCursor: 5, isAtEnd: false });
+    expect(s.playing).toBe(true);
+    const statesBeforeToggle = new Uint8Array(s.player!.states);
+    const currentBeforeToggle = s.player!.currentNode;
+
+    const toggleAction: SimulationAction = {
+      type: 'toggle-skip-intermediate',
+      currentCursor: 5,
+      wasAtEnd: false,
+    };
+    const t1 = simulationReducer(s, toggleAction);
+    const t2 = simulationReducer(s, toggleAction);
+    expect(t1.skipIntermediateSteps).toBe(true);
+    expect(t1.cursor).toBeLessThan(5);
+    expect(t1.player!.states).toEqual(statesBeforeToggle);
+    expect(t1.player!.currentNode).toBe(currentBeforeToggle);
+    expect(t1.playing).toBe(true);
+    expect(t1.player!.length).toBe(skippedLength);
+    expect(t2.cursor).toBe(t1.cursor);
+    expect(t2.player!.states).toEqual(t1.player!.states);
+
+    // Untoggling back restores the raw cursor and identical canvas state.
+    const backToFull = simulationReducer(t1, {
+      type: 'toggle-skip-intermediate',
+      currentCursor: t1.cursor,
+      wasAtEnd: false,
+    });
+    expect(backToFull.skipIntermediateSteps).toBe(false);
+    expect(backToFull.cursor).toBe(5);
+    expect(backToFull.player!.states).toEqual(statesBeforeToggle);
+    expect(backToFull.player!.currentNode).toBe(currentBeforeToggle);
+
+    // Toggling Tree while skipIntermediateSteps is active on Grid preserves visual state cleanly.
+    const beforeTreeLen = t1.player!.length;
+    const withTree = simulationReducer(t1, {
+      type: 'toggle-grid-tree',
+      currentCursor: t1.player!.cursor,
+      wasAtEnd: false,
+    });
+    expect(withTree.showGridTree).toBe(true);
+    expect(withTree.player!.length).toBeGreaterThanOrEqual(beforeTreeLen);
+    expect(withTree.player!.states).toEqual(statesBeforeToggle);
+    expect(withTree.player!.currentNode).toBe(currentBeforeToggle);
+  });
 });

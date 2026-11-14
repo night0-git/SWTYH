@@ -4,7 +4,13 @@ import { Grid2DProblem } from '../engine/gridProblem';
 import { buildPreset } from '../engine/presets';
 import { getAlgorithm } from '../engine/registry';
 import { runAlgorithm } from '../engine/runner';
-import { TracePlayer } from '../engine/trace';
+import {
+  compactVisualTrace,
+  rawCursorToVisualCursor,
+  stepHasVisualChange,
+  TracePlayer,
+  visualCursorToRawCursor,
+} from '../engine/trace';
 import { NodeState, type NodeId, type SearchContext, type SearchProblem } from '../engine/types';
 
 describe('TracePlayer & ContainerView DOM sync', () => {
@@ -362,6 +368,145 @@ describe('TracePlayer & ContainerView DOM sync', () => {
       for (const c of player.getContainers()) {
         expect(c.size).toBe(0);
       }
+    }
+  });
+
+  it('compacts non-visual intermediate steps while keeping exact state & container reversibility', () => {
+    const graph = buildPreset('unweighted-graph', false);
+    const idsEntry = getAlgorithm('ids')!;
+    const rawRun = runAlgorithm(idsEntry.search, graph);
+    const visualTrace = compactVisualTrace(rawRun.trace, {
+      includeParents: true,
+      includeActiveEdge: true,
+    });
+
+    expect(visualTrace.length).toBeGreaterThan(0);
+    expect(visualTrace.length).toBeLessThan(rawRun.trace.length);
+    for (const step of visualTrace.steps) {
+      expect(
+        stepHasVisualChange(step, { includeParents: true, includeActiveEdge: true }),
+      ).toBe(true);
+    }
+
+    const rawPlayer = new TracePlayer(rawRun.trace);
+    const visualPlayer = new TracePlayer(visualTrace);
+    rawPlayer.seek(rawPlayer.length);
+    visualPlayer.seek(visualPlayer.length);
+
+    expect(Array.from(visualPlayer.states)).toEqual(Array.from(rawPlayer.states));
+    expect(Array.from(visualPlayer.parents)).toEqual(Array.from(rawPlayer.parents));
+    expect(visualPlayer.currentNode).toBe(rawPlayer.currentNode);
+    expect(visualPlayer.getFlags()).toEqual(rawPlayer.getFlags());
+    expect(visualPlayer.getContainers(50)).toEqual(rawPlayer.getContainers(50));
+
+    // Step forward and backward through every compacted step and verify exact reversibility.
+    visualPlayer.reset();
+    const forwardSnapshots: string[] = [];
+    for (let t = 0; t <= visualPlayer.length; t += 1) {
+      visualPlayer.seek(t);
+      forwardSnapshots.push(
+        JSON.stringify({
+          states: Array.from(visualPlayer.states),
+          parents: Array.from(visualPlayer.parents),
+          cur: visualPlayer.currentNode,
+          ef: visualPlayer.activeEdgeFrom,
+          et: visualPlayer.activeEdgeTo,
+          flags: visualPlayer.getFlags(),
+          containers: visualPlayer.getContainers(50),
+        }),
+      );
+    }
+    for (let t = visualPlayer.length; t >= 0; t -= 1) {
+      visualPlayer.seek(t);
+      const snap = JSON.stringify({
+        states: Array.from(visualPlayer.states),
+        parents: Array.from(visualPlayer.parents),
+        cur: visualPlayer.currentNode,
+        ef: visualPlayer.activeEdgeFrom,
+        et: visualPlayer.activeEdgeTo,
+        flags: visualPlayer.getFlags(),
+        containers: visualPlayer.getContainers(50),
+      });
+      expect(snap).toBe(forwardSnapshots[t]);
+    }
+  });
+
+  it('respects includeParents / includeActiveEdge and handles trailing or all-non-visual traces', () => {
+    const grid = buildPreset('open-field', false) as Grid2DProblem;
+
+    // Algorithm with only non-visual steps produces 0 replay steps when compacted.
+    const noVisualRun = runAlgorithm((_p, ctx) => {
+      const flags = ctx.flags();
+      const raw = ctx.stack<number>('Depth', { raw: true });
+      flags.set('a', 1);
+      raw.push(42);
+      return null;
+    }, grid);
+    expect(compactVisualTrace(noVisualRun.trace).length).toBe(0);
+
+    // Algorithm with parent update on an already-frontier cell + trailing flag update.
+    const rawRun = runAlgorithm((p, ctx) => {
+      const q = ctx.queue('Queue');
+      const parent = ctx.parentMap();
+      const flags = ctx.flags();
+      const n1 = p.neighbors(p.start)[0]!.node;
+      const n2 = p.neighbors(p.start)[1]!.node;
+      q.push(n1); // visual: n1 -> Frontier
+      q.push(n2); // visual: n2 -> Frontier
+      parent.set(n2, n1); // visual ONLY when includeParents is true (on grid with Tree ON)
+      flags.set('done', true); // trailing non-visual step
+      return null;
+    }, grid);
+
+    const gridNoTree = compactVisualTrace(rawRun.trace, {
+      includeParents: false,
+      includeActiveEdge: false,
+    });
+    expect(gridNoTree.length).toBe(3);
+    const noTreePlayer = new TracePlayer(gridNoTree);
+    noTreePlayer.seek(noTreePlayer.length);
+    expect(noTreePlayer.getFlags()).toEqual([{ name: 'done', value: true }]);
+
+    const gridWithTree = compactVisualTrace(rawRun.trace, {
+      includeParents: true,
+      includeActiveEdge: false,
+    });
+    expect(gridWithTree.length).toBe(4);
+  });
+
+  it('maps cursors bidirectionally between raw and compacted traces with identical canvas state', () => {
+    const graph = buildPreset('unweighted-graph', false);
+    const idsEntry = getAlgorithm('ids')!;
+    const rawRun = runAlgorithm(idsEntry.search, graph);
+    const filter = { includeParents: true, includeActiveEdge: true };
+    const visualTrace = compactVisualTrace(rawRun.trace, filter);
+
+    const rawPlayer = new TracePlayer(rawRun.trace);
+    const visualPlayer = new TracePlayer(visualTrace);
+
+    // Every visual cursor maps to a raw cursor with identical canvas states, currentNode, and parents.
+    for (let vc = 0; vc <= visualTrace.length; vc += 1) {
+      const rc = visualCursorToRawCursor(rawRun.trace, vc, filter);
+      expect(rawCursorToVisualCursor(rawRun.trace, rc, filter)).toBe(vc);
+      visualPlayer.seek(vc);
+      rawPlayer.seek(rc);
+      expect(Array.from(rawPlayer.states)).toEqual(Array.from(visualPlayer.states));
+      expect(Array.from(rawPlayer.parents)).toEqual(Array.from(visualPlayer.parents));
+      expect(rawPlayer.currentNode).toBe(visualPlayer.currentNode);
+      expect(rawPlayer.activeEdgeFrom).toBe(visualPlayer.activeEdgeFrom);
+      expect(rawPlayer.activeEdgeTo).toBe(visualPlayer.activeEdgeTo);
+    }
+
+    // Every raw cursor maps to a visual cursor with identical canvas visual state.
+    for (let rc = 0; rc <= rawRun.trace.length; rc += 1) {
+      const vc = rawCursorToVisualCursor(rawRun.trace, rc, filter);
+      rawPlayer.seek(rc);
+      visualPlayer.seek(vc);
+      expect(Array.from(visualPlayer.states)).toEqual(Array.from(rawPlayer.states));
+      expect(Array.from(visualPlayer.parents)).toEqual(Array.from(rawPlayer.parents));
+      expect(visualPlayer.currentNode).toBe(rawPlayer.currentNode);
+      expect(visualPlayer.activeEdgeFrom).toBe(rawPlayer.activeEdgeFrom);
+      expect(visualPlayer.activeEdgeTo).toBe(rawPlayer.activeEdgeTo);
     }
   });
 });
