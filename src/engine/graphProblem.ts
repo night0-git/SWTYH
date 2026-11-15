@@ -16,6 +16,8 @@ export interface GraphOptions {
   readonly bounds?: Bounds2D;
   readonly directed?: boolean;
   readonly weighted?: boolean;
+  readonly labels?: readonly (string | null | undefined)[] | null;
+  readonly defaultLabels?: readonly (string | null | undefined)[] | null;
 }
 
 function computeBounds(positions: readonly Point2D[] | null): Bounds2D {
@@ -40,6 +42,31 @@ function computeBounds(positions: readonly Point2D[] | null): Bounds2D {
   };
 }
 
+function normalizeLabelText(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.replace(/\s+/g, ' ').trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function compactLabelArray(
+  arr: readonly (string | null)[] | null,
+): readonly (string | null)[] | null {
+  return arr && arr.some((item) => item !== null) ? arr : null;
+}
+
+function resolveDefaultLabel(
+  node: NodeId,
+  start: NodeId,
+  goal: NodeId,
+  defaultLabels: readonly (string | null)[] | null,
+  prefixId = false,
+): string {
+  if (node === start) return 'S';
+  if (node === goal) return 'G';
+  const base = defaultLabels?.[node] ?? String(node);
+  return prefixId ? `#${base}` : base;
+}
+
 function cloneAdjacency(adjacency: readonly (readonly Edge[])[]): Edge[][] {
   return adjacency.map((list) => list.map((e) => ({ node: e.node, cost: e.cost })));
 }
@@ -50,6 +77,16 @@ function buildEffectiveAdjacency(
 ): readonly (readonly Edge[])[] {
   if (weighted) return raw;
   return raw.map((list) => list.map((e) => ({ node: e.node, cost: 1 })));
+}
+
+function normalizeLabelArray(
+  nodeCount: number,
+  rawList: readonly (string | null | undefined)[] | null | undefined,
+): readonly (string | null)[] | null {
+  if (!rawList) return null;
+  return compactLabelArray(
+    Array.from({ length: nodeCount }, (_, i) => normalizeLabelText(rawList[i])),
+  );
 }
 
 export class AdjacencyGraphProblem implements SearchProblem {
@@ -63,6 +100,8 @@ export class AdjacencyGraphProblem implements SearchProblem {
   readonly adjacency: readonly (readonly Edge[])[];
   readonly positions: readonly Point2D[] | null;
   readonly bounds: Bounds2D;
+  readonly labels: readonly (string | null)[] | null;
+  readonly defaultLabels: readonly (string | null)[] | null;
 
   constructor(options: GraphOptions) {
     this.nodeCount = options.nodeCount;
@@ -74,6 +113,8 @@ export class AdjacencyGraphProblem implements SearchProblem {
     this.adjacency = buildEffectiveAdjacency(options.adjacency, this.weighted);
     this.positions = options.positions ?? null;
     this.bounds = options.bounds ?? computeBounds(this.positions);
+    this.labels = normalizeLabelArray(this.nodeCount, options.labels);
+    this.defaultLabels = normalizeLabelArray(this.nodeCount, options.defaultLabels);
   }
 
   private cloneWith(overrides: Partial<GraphOptions>): AdjacencyGraphProblem {
@@ -86,7 +127,23 @@ export class AdjacencyGraphProblem implements SearchProblem {
       bounds: overrides.bounds ?? this.bounds,
       directed: overrides.directed ?? this.directed,
       weighted: overrides.weighted ?? this.weighted,
+      labels: 'labels' in overrides ? overrides.labels : this.labels,
+      defaultLabels:
+        'defaultLabels' in overrides ? overrides.defaultLabels : this.defaultLabels,
     });
+  }
+
+  customLabel(node: NodeId): string | null {
+    if (node < 0 || node >= this.nodeCount) return null;
+    return this.labels?.[node] ?? null;
+  }
+
+  defaultLabel(node: NodeId, prefixId = false): string {
+    return resolveDefaultLabel(node, this.start, this.goal, this.defaultLabels, prefixId);
+  }
+
+  displayLabel(node: NodeId, prefixId = false): string {
+    return this.customLabel(node) ?? this.defaultLabel(node, prefixId);
   }
 
   isGoal(node: NodeId): boolean {
@@ -129,13 +186,48 @@ export class AdjacencyGraphProblem implements SearchProblem {
     return this.cloneWith({ positions: nextPositions });
   }
 
+  withRenamedVertex(node: NodeId, label: string): AdjacencyGraphProblem {
+    if (node < 0 || node >= this.nodeCount) return this;
+    const nextVal = normalizeLabelText(label);
+    if (nextVal === this.customLabel(node)) return this;
+
+    const nextLabels = Array.from({ length: this.nodeCount }, (_, idx) =>
+      idx === node ? nextVal : this.customLabel(idx),
+    );
+    return this.cloneWith({ labels: compactLabelArray(nextLabels) });
+  }
+
+  private nextNumberedLabel(
+    startId: NodeId,
+    goalId: NodeId,
+    excludeNode = -1,
+  ): string {
+    const used = new Set<string>();
+    for (let u = 0; u < this.nodeCount; u += 1) {
+      if (u === startId || u === goalId || u === excludeNode) continue;
+      used.add(this.displayLabel(u));
+    }
+    let candidate = 1;
+    while (used.has(String(candidate))) {
+      candidate += 1;
+    }
+    return String(candidate);
+  }
+
   withAddedVertex(pos: Point2D): AdjacencyGraphProblem {
     const nextPositions = [...(this.positions ?? []), pos];
     const nextAdjacency = [...cloneAdjacency(this.rawAdjacency), []];
+    const nextLabels = this.labels ? [...this.labels, null] : null;
+    const assignedDefault = this.nextNumberedLabel(this.start, this.goal);
+    const nextDefaults = this.defaultLabels
+      ? [...this.defaultLabels, assignedDefault]
+      : [...new Array<string | null>(this.nodeCount).fill(null), assignedDefault];
     return this.cloneWith({
       nodeCount: this.nodeCount + 1,
       adjacency: nextAdjacency,
       positions: nextPositions,
+      labels: nextLabels,
+      defaultLabels: nextDefaults,
     });
   }
 
@@ -165,6 +257,12 @@ export class AdjacencyGraphProblem implements SearchProblem {
     const nextPositions = this.positions
       ? this.positions.filter((_, idx) => idx !== node)
       : undefined;
+    const nextLabels = this.labels
+      ? this.labels.filter((_, idx) => idx !== node)
+      : null;
+    const nextDefaults = this.defaultLabels
+      ? this.defaultLabels.filter((_, idx) => idx !== node)
+      : null;
 
     return this.cloneWith({
       nodeCount: this.nodeCount - 1,
@@ -172,21 +270,55 @@ export class AdjacencyGraphProblem implements SearchProblem {
       goal: remapId(this.goal),
       adjacency: nextAdjacency,
       positions: nextPositions,
+      labels: compactLabelArray(nextLabels),
+      defaultLabels: compactLabelArray(nextDefaults),
+    });
+  }
+
+  private withSpecialNode(kind: 'start' | 'goal', node: NodeId): AdjacencyGraphProblem {
+    const prev = kind === 'start' ? this.start : this.goal;
+    const other = kind === 'start' ? this.goal : this.start;
+    if (node < 0 || node >= this.nodeCount || node === other || node === prev) {
+      return this;
+    }
+
+    const nextStart = kind === 'start' ? node : this.start;
+    const nextGoal = kind === 'goal' ? node : this.goal;
+    let nextDefaults = this.defaultLabels;
+
+    if (!this.customLabel(prev)) {
+      const prevFallback = this.defaultLabels?.[prev] ?? String(prev);
+      let collides = false;
+      for (let u = 0; u < this.nodeCount; u += 1) {
+        if (u === nextStart || u === nextGoal || u === prev) continue;
+        if (this.displayLabel(u) === prevFallback) {
+          collides = true;
+          break;
+        }
+      }
+      if (collides) {
+        const replacement = this.nextNumberedLabel(nextStart, nextGoal, prev);
+        const arr = this.defaultLabels
+          ? [...this.defaultLabels]
+          : new Array<string | null>(this.nodeCount).fill(null);
+        arr[prev] = replacement;
+        nextDefaults = arr;
+      }
+    }
+
+    return this.cloneWith({
+      start: nextStart,
+      goal: nextGoal,
+      defaultLabels: nextDefaults,
     });
   }
 
   withStart(node: NodeId): AdjacencyGraphProblem {
-    if (node < 0 || node >= this.nodeCount || node === this.goal || node === this.start) {
-      return this;
-    }
-    return this.cloneWith({ start: node });
+    return this.withSpecialNode('start', node);
   }
 
   withGoal(node: NodeId): AdjacencyGraphProblem {
-    if (node < 0 || node >= this.nodeCount || node === this.start || node === this.goal) {
-      return this;
-    }
-    return this.cloneWith({ goal: node });
+    return this.withSpecialNode('goal', node);
   }
 
   withAddedEdge(u: NodeId, v: NodeId, cost = 10): AdjacencyGraphProblem {

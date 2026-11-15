@@ -197,4 +197,43 @@ describe('SearchCanvasRenderer hitTest, coordinate mapping, and rendering', () =
     expect(playbackRings.some((c) => Math.abs(c.x - 392) < 1 && Math.abs(c.y - 356) < 1)).toBe(true);
     expect(playbackRings.some((c) => Math.abs(c.x - 248) < 1 && Math.abs(c.y - 132) < 1)).toBe(false);
   });
+
+  it('renders custom node labels, truncates overly long labels, and highlights selectedNode', () => {
+    const canvas = createSizedCanvas(688, 488);
+    const ctx = canvas.getContext('2d')!;
+    vi.spyOn(canvas, 'getContext').mockImplementation(
+      ((id: string) => (id === '2d' ? ctx : null)) as unknown as typeof canvas.getContext,
+    );
+    const renderer = new SearchCanvasRenderer(canvas);
+
+    // Grid mode returns null for graphNodeScreenPosition.
+    const grid = buildPreset('open-field', false);
+    renderer.render(grid, grid.initialStates(), {});
+    expect(renderer.graphNodeScreenPosition(0)).toBeNull();
+
+    const graph = (buildPreset('sample-graph', false) as AdjacencyGraphProblem)
+      .withRenamedVertex(0, 'Arad')
+      .withRenamedVertex(1, 'LongStationName');
+
+    const drawnLabels: string[] = [];
+    const origFillText = ctx.fillText.bind(ctx);
+    vi.spyOn(ctx, 'fillText').mockImplementation((text, x, y) => {
+      drawnLabels.push(text);
+      origFillText(text, x, y);
+    });
+    const strokeColors: string[] = [];
+    const origArc = ctx.arc.bind(ctx);
+    vi.spyOn(ctx, 'arc').mockImplementation((x, y, r, start, end, ccw) => {
+      strokeColors.push(String(ctx.strokeStyle));
+      origArc(x, y, r, start, end, ccw);
+    });
+
+    renderer.render(graph, graph.initialStates(), { selectedNode: 1 });
+
+    expect(renderer.graphNodeScreenPosition(0)).toEqual({ x: 92, y: 244 });
+    expect(renderer.graphNodeScreenPosition(99)).toBeNull();
+    expect(drawnLabels).toContain('Arad');
+    expect(drawnLabels.some((t) => t.endsWith('…'))).toBe(true);
+    expect(strokeColors).toContain('#1d4ed8');
+  });
 });

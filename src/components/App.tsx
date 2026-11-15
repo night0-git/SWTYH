@@ -45,6 +45,7 @@ const GRAPH_TOOL_OPTIONS: readonly { readonly id: GraphTool; readonly label: str
   { id: 'erase', label: 'Erase' },
   { id: 'set-start', label: 'Set S' },
   { id: 'set-goal', label: 'Set G' },
+  { id: 'rename', label: 'Rename' },
 ];
 
 interface LegendItem {

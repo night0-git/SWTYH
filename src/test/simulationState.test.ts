@@ -491,4 +491,75 @@ describe('simulationReducer replay & editing hot paths', () => {
     expect(withTree.player!.states).toEqual(statesBeforeToggle);
     expect(withTree.player!.currentNode).toBe(currentBeforeToggle);
   });
+
+  it('renames graph vertices across all replay states without losing cursor position', () => {
+    let s = createInitialSimulationState();
+    // Ignored in Grid mode.
+    const ignored = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 0, label: 'A' },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    expect(ignored).toBe(s);
+
+    s = simulationReducer(s, { type: 'select-preset', presetId: 'directed-graph' });
+    s = simulationReducer(s, { type: 'select-algorithm', id: 'bfs' });
+    s = simulationReducer(s, { type: 'set-graph-tool', tool: 'rename' });
+    expect(s.graphTool).toBe('rename');
+
+    // Rename before run (player === null) updates problem without running.
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 1, label: 'Zebra' },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    expect((s.problem as AdjacencyGraphProblem).displayLabel(1)).toBe('Zebra');
+    expect(s.player).toBeNull();
+
+    // No-op rename returns identical state reference.
+    const same = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 1, label: '  Zebra  ' },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    expect(same).toBe(s);
+
+    // Mid-replay rename preserves cursor and pauses playback while updating label.
+    s = simulationReducer(s, { type: 'jump-end' });
+    s = simulationReducer(s, { type: 'scrub', cursor: 3 });
+    expect(s.player!.states[1]).toBe(NodeState.Frontier);
+
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 2, label: 'Zzz' },
+      currentCursor: 3,
+      wasAtEnd: false,
+    });
+    expect(s.player!.cursor).toBe(3);
+    expect(s.playing).toBe(false);
+    expect((s.problem as AdjacencyGraphProblem).displayLabel(2)).toBe('Zzz');
+
+    // Rename at End keeps isAtEnd true and allows clearing back to default 'S'.
+    s = simulationReducer(s, { type: 'jump-end' });
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 0, label: 'Origin' },
+      currentCursor: s.player!.cursor,
+      wasAtEnd: true,
+    });
+    expect(s.player!.isAtEnd).toBe(true);
+    expect((s.problem as AdjacencyGraphProblem).displayLabel(0)).toBe('Origin');
+
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'rename-vertex', node: 0, label: '' },
+      currentCursor: s.player!.cursor,
+      wasAtEnd: true,
+    });
+    expect(s.player!.isAtEnd).toBe(true);
+    expect((s.problem as AdjacencyGraphProblem).displayLabel(0)).toBe('S');
+  });
 });

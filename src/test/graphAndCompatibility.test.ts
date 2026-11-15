@@ -81,6 +81,89 @@ describe('AdjacencyGraphProblem customization and graph modes', () => {
     expect(removed.neighbors(1).some((e) => e.node === 0)).toBe(false);
     expect(removed.clearedEdges().neighbors(0)).toEqual([]);
   });
+
+  it('supports renaming vertices, normalizes whitespace, and remaps labels across edits', () => {
+    const base = buildPreset('blank-graph', false) as AdjacencyGraphProblem;
+    expect(base.displayLabel(0)).toBe('S');
+    expect(base.displayLabel(1)).toBe('G');
+    expect(base.customLabel(0)).toBeNull();
+
+    const g1 = base
+      .withAddedVertex({ x: 40, y: 30 }) // 2
+      .withAddedVertex({ x: 60, y: 70 }) // 3
+      .withRenamedVertex(0, '  Arad  ')
+      .withRenamedVertex(2, 'Sibiu\tNorth')
+      .withRenamedVertex(3, 'Bucharest');
+
+    expect(g1.customLabel(0)).toBe('Arad');
+    expect(g1.displayLabel(0, true)).toBe('Arad');
+    expect(g1.displayLabel(2, true)).toBe('Sibiu North');
+    expect(g1.displayLabel(3)).toBe('Bucharest');
+
+    // No-op when setting identical label or invalid index.
+    expect(g1.withRenamedVertex(0, 'Arad')).toBe(g1);
+    expect(g1.withRenamedVertex(99, 'X')).toBe(g1);
+
+    // Preserved across start/goal moves, edge additions, directed/weighted toggles, and vertex addition.
+    const g2 = g1
+      .withAddedEdge(0, 2, 12)
+      .withDirected(true)
+      .withWeighted(false)
+      .withStart(2)
+      .withAddedVertex({ x: 80, y: 20 }); // 4
+    expect(g2.displayLabel(0)).toBe('Arad');
+    expect(g2.displayLabel(2)).toBe('Sibiu North');
+    expect(g2.displayLabel(4)).toBe('1');
+    expect(g2.displayLabel(4, true)).toBe('#1');
+
+    // Removing vertex 0 shifts remaining custom labels cleanly.
+    const g3 = g2.withRemovedVertex(0);
+    expect(g3.start).toBe(1); // shifted from 2 -> 1
+    expect(g3.goal).toBe(0);  // shifted from 1 -> 0
+    expect(g3.displayLabel(0)).toBe('G');
+    expect(g3.displayLabel(1)).toBe('Sibiu North');
+    expect(g3.displayLabel(2)).toBe('Bucharest');
+    expect(g3.displayLabel(3)).toBe('1');
+
+    // Clearing custom labels reverts back to S / G / #id and nulls out labels array.
+    const cleared = g3.withRenamedVertex(1, '   ').withRenamedVertex(2, '');
+    expect(cleared.labels).toBeNull();
+    expect(cleared.displayLabel(1)).toBe('S');
+    expect(cleared.displayLabel(2, true)).toBe('#2');
+  });
+
+  it('numbers added vertices starting from 1 while ignoring S and G and avoiding collisions', () => {
+    const blank = buildPreset('blank-graph', false) as AdjacencyGraphProblem;
+    expect(blank.displayLabel(blank.start)).toBe('S');
+    expect(blank.displayLabel(blank.goal)).toBe('G');
+
+    const g1 = blank.withAddedVertex({ x: 30, y: 20 }); // nodeId 2 -> '1'
+    const g2 = g1.withAddedVertex({ x: 50, y: 20 }); // nodeId 3 -> '2'
+    const g3 = g2.withAddedVertex({ x: 70, y: 20 }); // nodeId 4 -> '3'
+    expect(g3.displayLabel(2)).toBe('1');
+    expect(g3.displayLabel(2, true)).toBe('#1');
+    expect(g3.displayLabel(3)).toBe('2');
+    expect(g3.displayLabel(4)).toBe('3');
+
+    // Removing '2' (nodeId 3) preserves remaining default numbers and fills gap '2' next.
+    const removed = g3.withRemovedVertex(3);
+    expect(removed.displayLabel(2)).toBe('1');
+    expect(removed.displayLabel(3)).toBe('3'); // was nodeId 4
+    const refilled = removed.withAddedVertex({ x: 85, y: 20 });
+    expect(refilled.displayLabel(4)).toBe('2');
+
+    // Moving Goal onto node 3 frees old Goal (node 1), which avoids colliding with node 2 ('1')
+    // and still displays 'G' on node 3 (auto-assigned default label does not block Set G/Set S).
+    const movedGoal = g2.withGoal(3);
+    expect(movedGoal.displayLabel(3)).toBe('G');
+    expect(movedGoal.displayLabel(2)).toBe('1');
+    expect(movedGoal.displayLabel(1)).toBe('2');
+
+    // Sample Graph has S=0, G=9 and intermediate nodes 1..8, so first added vertex is '9'.
+    const sample = buildPreset('sample-graph', false) as AdjacencyGraphProblem;
+    const samplePlusOne = sample.withAddedVertex({ x: 95, y: 50 });
+    expect(samplePlusOne.displayLabel(10)).toBe('9');
+  });
 });
 
 describe('Compatibility analyzer and ground-truth optimality warnings', () => {

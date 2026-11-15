@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import type { AdjacencyGraphProblem } from '../engine/graphProblem';
 import type { Grid2DProblem } from '../engine/gridProblem';
 import type { TracePlayer } from '../engine/trace';
 import type { ContainerKind, ContainerOp, SearchProblem } from '../engine/types';
@@ -30,15 +31,15 @@ function formatValue(
   if (typeof value !== 'number' || !Number.isInteger(value)) {
     return String(value);
   }
-  if (value === problem.start) return 'S';
-  if (value === problem.goal) return 'G';
   if (problem.kind === 'grid') {
+    if (value === problem.start) return 'S';
+    if (value === problem.goal) return 'G';
     const grid = problem as Grid2DProblem;
     const x = value % grid.cols;
     const y = (value - x) / grid.cols;
     return `(${x},${y})`;
   }
-  return `#${value}`;
+  return (problem as AdjacencyGraphProblem).displayLabel(value, true);
 }
 
 function formatOpBadge(

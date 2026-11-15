@@ -21,7 +21,14 @@ import type {
 
 export type DrawTool = 'wall' | 'weight' | 'erase';
 export type WeightBrush = 2 | 5 | 10;
-export type GraphTool = 'move' | 'add-node' | 'add-edge' | 'erase' | 'set-start' | 'set-goal';
+export type GraphTool =
+  | 'move'
+  | 'add-node'
+  | 'add-edge'
+  | 'erase'
+  | 'set-start'
+  | 'set-goal'
+  | 'rename';
 
 export type GridEdit =
   | { readonly type: 'wall'; readonly node: NodeId; readonly value: 0 | 1 }
@@ -33,6 +40,7 @@ export type GridEdit =
 export type GraphEdit =
   | { readonly type: 'add-vertex'; readonly pos: Point2D }
   | { readonly type: 'remove-vertex'; readonly node: NodeId }
+  | { readonly type: 'rename-vertex'; readonly node: NodeId; readonly label: string }
   | { readonly type: 'add-edge'; readonly u: NodeId; readonly v: NodeId; readonly cost?: number }
   | { readonly type: 'set-edge-weight'; readonly u: NodeId; readonly v: NodeId; readonly cost: number }
   | { readonly type: 'remove-edge'; readonly u: NodeId; readonly v: NodeId }
@@ -169,6 +177,8 @@ export function applyGraphEdit(
       return graph.withAddedVertex(edit.pos);
     case 'remove-vertex':
       return graph.withRemovedVertex(edit.node);
+    case 'rename-vertex':
+      return graph.withRenamedVertex(edit.node, edit.label);
     case 'add-edge': {
       const defaultCost = Math.max(1, Math.round(graph.heuristic(edit.u, edit.v)));
       return graph.withAddedEdge(edit.u, edit.v, edit.cost ?? defaultCost);

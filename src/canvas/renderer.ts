@@ -80,6 +80,7 @@ export interface RenderOptions {
   readonly showGridTree?: boolean;
   readonly hoverNode?: NodeId | null;
   readonly dragNode?: NodeId | null;
+  readonly selectedNode?: NodeId | null;
   readonly selectedEdge?: { readonly u: NodeId; readonly v: NodeId } | null;
   readonly draftEdge?: { readonly from: NodeId; readonly toX: number; readonly toY: number } | null;
 }
@@ -270,6 +271,42 @@ function strokeEdgeCurve(
   ctx.stroke();
 }
 
+function drawFittedCircleLabel(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number,
+  radius: number,
+  monoFont: string,
+): void {
+  const maxW = radius * 1.72;
+  ctx.font = `600 12px ${monoFont}`;
+  const w12 = ctx.measureText(label).width;
+  if (w12 <= maxW) {
+    ctx.fillText(label, x, y);
+    return;
+  }
+
+  const fontSize = Math.max(9, Math.floor((12 * maxW) / w12));
+  ctx.font = `600 ${fontSize}px ${monoFont}`;
+  const wCur = ctx.measureText(label).width;
+  const measureScaled = (s: string): number => {
+    const w = ctx.measureText(s).width;
+    return wCur < w12 ? w : w * (fontSize / 12);
+  };
+
+  if (measureScaled(label) <= maxW) {
+    ctx.fillText(label, x, y);
+    return;
+  }
+
+  let end = label.length - 1;
+  while (end > 1 && measureScaled(`${label.slice(0, end)}…`) > maxW) {
+    end -= 1;
+  }
+  ctx.fillText(`${label.slice(0, end)}…`, x, y);
+}
+
 /**
  * React-free Canvas 2D renderer for SearchProblem + Uint8Array node states.
  */
@@ -385,6 +422,13 @@ export class SearchCanvasRenderer {
       x: Math.max(bounds.minX + marginX, Math.min(bounds.maxX - marginX, rawX)),
       y: Math.max(bounds.minY + marginY, Math.min(bounds.maxY - marginY, rawY)),
     };
+  }
+
+  graphNodeScreenPosition(node: NodeId): Point2D | null {
+    const layout = this.layout;
+    if (!layout || layout.kind !== 'graph') return null;
+    const pt = layout.coords[node];
+    return pt ? { x: pt.x, y: pt.y } : null;
   }
 
   render(
@@ -875,6 +919,7 @@ export class SearchCanvasRenderer {
       const state = states[u] ?? NodeState.Unvisited;
       const isHovered = options.hoverNode === u;
       const isDragged = options.dragNode === u;
+      const isSelected = options.selectedNode === u;
       const isNeighbor = neighborNodes.has(u);
       const needsCurrentRing =
         currentNode === u && (state === NodeState.Start || state === NodeState.Goal);
@@ -887,7 +932,7 @@ export class SearchCanvasRenderer {
         ctx.stroke();
       }
 
-      if (isHovered || isDragged) {
+      if (isHovered || isDragged || isSelected) {
         ctx.strokeStyle = this.palette.accent;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -906,7 +951,7 @@ export class SearchCanvasRenderer {
 
       ctx.fillStyle = colors[state] ?? this.palette.surface;
       ctx.strokeStyle = this.palette.ink;
-      ctx.lineWidth = isHovered || isDragged ? 2 : 1.25;
+      ctx.lineWidth = isHovered || isDragged || isSelected ? 2 : 1.25;
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
       ctx.fill();
@@ -918,8 +963,14 @@ export class SearchCanvasRenderer {
         state === NodeState.Path ||
         state === NodeState.Wall;
       ctx.fillStyle = darkFill ? this.palette.surface : this.palette.ink;
-      const label = u === graph.start ? 'S' : u === graph.goal ? 'G' : String(u);
-      ctx.fillText(label, pt.x, pt.y + 0.5);
+      drawFittedCircleLabel(
+        ctx,
+        graph.displayLabel(u),
+        pt.x,
+        pt.y + 0.5,
+        radius,
+        this.palette.monoFont,
+      );
     }
   }
 }

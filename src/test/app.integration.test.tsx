@@ -602,4 +602,82 @@ describe('<App /> UI integration', () => {
     expect(checkbox.checked).toBe(false);
     expect(screen.getByText(`3 / ${fullTotal}`)).toBeTruthy();
   });
+
+  it('allows renaming graph nodes via Rename tool or double-click and reflects names everywhere', () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Algorithm' }), {
+      target: { value: 'bfs' },
+    });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'sample-graph' },
+    });
+
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    mockCanvasBox(canvas, 688, 488);
+    // Step twice so Start (0) is popped and its neighbor #1 is pushed & visible in Queue.
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+    fireEvent.click(screen.getByRole('button', { name: '+1' }));
+
+    // Vertex 0 is at (92, 244), Vertex 1 is at (26, 20) in [0..100] -> (44 + 156, 44 + 80) = (200, 124).
+    // 1) Double-click vertex 1 in default Move mode to open rename popover.
+    fireEvent.doubleClick(canvas, { clientX: 200, clientY: 124 });
+    const nameInput = screen.getByRole('textbox', { name: 'Node name' }) as HTMLInputElement;
+    expect(nameInput.placeholder).toBe('1');
+
+    // Space and arrow keys typed inside the input must not start playback or step.
+    fireEvent.keyDown(nameInput, { code: 'Space' });
+    fireEvent.keyDown(nameInput, { code: 'ArrowRight' });
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+    expect(screen.getByText(/^3 \/ \d+$/)).toBeTruthy();
+
+    fireEvent.change(nameInput, { target: { value: 'Alpha' } });
+    fireEvent.submit(nameInput.closest('form')!);
+    expect(screen.queryByRole('textbox', { name: 'Node name' })).toBeNull();
+
+    // At step 3 without tie-breaking reorder, neighbor 1 is still pushed first and now renders as Alpha.
+    expect(screen.getByText(/^3 \/ \d+$/)).toBeTruthy();
+    expect(document.querySelector('.containers-panel')?.textContent).toContain('PUSH Alpha');
+    expect(document.querySelector('.containers-panel')?.textContent).toContain('Alpha');
+
+    const hoverEl = document.querySelector('.hover-readout') as HTMLElement;
+    fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
+    expect(hoverEl.textContent).toContain('neighbors: [Alpha, #2, #3]');
+
+    // Edge weight popover shows updated endpoint label S→Alpha.
+    // Midpoint between (92, 244) and (200, 124) is (146, 184).
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 146, clientY: 184, pointerId: 1 });
+    expect(document.querySelector('.edge-weight-label')?.textContent).toBe('S→Alpha');
+    fireEvent.keyDown(screen.getByRole('spinbutton', { name: 'Edge weight' }), { key: 'Escape' });
+
+    // 2) Use Rename tool button to rename Start (vertex 0) -> 'Origin', then Escape/Reset.
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    fireEvent.pointerLeave(canvas);
+    expect(hoverEl.textContent).toBe('hover: click vertex to rename');
+
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 92, clientY: 244, pointerId: 2 });
+    const startInput = screen.getByRole('textbox', { name: 'Node name' }) as HTMLInputElement;
+    expect(startInput.placeholder).toBe('S');
+    fireEvent.change(startInput, { target: { value: 'Origin' } });
+    fireEvent.submit(startInput.closest('form')!);
+
+    fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
+    expect(hoverEl.textContent).toContain('vertex Origin ·');
+
+    // Reopen and Escape cancels without modifying; Reset restores default 'S'.
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 92, clientY: 244, pointerId: 3 });
+    const editAgain = screen.getByRole('textbox', { name: 'Node name' }) as HTMLInputElement;
+    expect(editAgain.value).toBe('Origin');
+    fireEvent.change(editAgain, { target: { value: 'DiscardMe' } });
+    fireEvent.keyDown(editAgain, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Node name' })).toBeNull();
+    fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
+    expect(hoverEl.textContent).toContain('vertex Origin ·');
+
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 92, clientY: 244, pointerId: 4 });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset node name' }));
+    fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
+    expect(hoverEl.textContent).toContain('vertex S ·');
+  });
 });

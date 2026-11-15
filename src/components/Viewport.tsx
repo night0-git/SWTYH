@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type RefObject } from 'react';
 import { SearchCanvasRenderer, type EdgeHitResult } from '../canvas/renderer';
 import type { AdjacencyGraphProblem } from '../engine/graphProblem';
 import type { Grid2DProblem } from '../engine/gridProblem';
@@ -32,6 +32,13 @@ interface WeightEditorState {
   readonly top: number;
 }
 
+interface NodeRenameEditorState {
+  readonly node: NodeId;
+  readonly defaultLabel: string;
+  readonly left: number;
+  readonly top: number;
+}
+
 const STATE_NAMES: Record<number, string> = {
   [NodeState.Unvisited]: 'unvisited',
   [NodeState.Wall]: 'wall',
@@ -50,18 +57,13 @@ const GRAPH_IDLE_HINTS: Record<GraphTool, string> = {
   erase: 'hover: click vertex or edge to remove',
   'set-start': 'hover: click vertex to move Start',
   'set-goal': 'hover: click vertex to move Goal',
+  rename: 'hover: click vertex to rename',
 };
 
-function formatGraphNodeId(problem: SearchProblem, node: NodeId): string {
-  if (node === problem.start) return 'S';
-  if (node === problem.goal) return 'G';
-  return `#${node}`;
-}
-
-function formatGraphNeighbors(problem: SearchProblem, node: NodeId, limit = 6): string {
-  const edges = problem.neighbors(node);
+function formatGraphNeighbors(graph: AdjacencyGraphProblem, node: NodeId, limit = 6): string {
+  const edges = graph.neighbors(node);
   if (edges.length === 0) return 'none';
-  const shown = edges.slice(0, limit).map((e) => formatGraphNodeId(problem, e.node));
+  const shown = edges.slice(0, limit).map((e) => graph.displayLabel(e.node, true));
   if (edges.length > limit) {
     return `[${shown.join(', ')}, +${edges.length - limit}]`;
   }
@@ -86,9 +88,10 @@ function formatHoverLabel(
     const h = problem.heuristic(node).toFixed(1);
     return `cell (${x}, ${y}) #${node} · ${stateName} · w:${w} · h:${h}`;
   }
-  const h = problem.heuristic(node).toFixed(1);
-  const neighbors = formatGraphNeighbors(problem, node);
-  return `vertex ${formatGraphNodeId(problem, node)} · ${stateName} · h:${h} · neighbors: ${neighbors}`;
+  const graph = problem as AdjacencyGraphProblem;
+  const h = graph.heuristic(node).toFixed(1);
+  const neighbors = formatGraphNeighbors(graph, node);
+  return `vertex ${graph.displayLabel(node, true)} · ${stateName} · h:${h} · neighbors: ${neighbors}`;
 }
 
 interface ViewportProps {
@@ -143,6 +146,7 @@ export function Viewport({
   const lastPaintedRef = useRef<NodeId | null>(null);
   const hoverNodeRef = useRef<NodeId | null>(null);
   const weightInputRef = useRef<HTMLInputElement | null>(null);
+  const nodeRenameInputRef = useRef<HTMLInputElement | null>(null);
   const lastSyncedTraceRef = useRef<{
     problem: SearchProblem;
     player: TracePlayer | null;
@@ -153,6 +157,8 @@ export function Viewport({
 
   const [weightEditor, setWeightEditor] = useState<WeightEditorState | null>(null);
   const [weightInput, setWeightInput] = useState('');
+  const [nodeRenameEditor, setNodeRenameEditor] = useState<NodeRenameEditorState | null>(null);
+  const [nodeRenameInput, setNodeRenameInput] = useState('');
 
   const problemRef = useRef(problem);
   const playerRef = useRef(player);
@@ -163,6 +169,7 @@ export function Viewport({
   const weightBrushRef = useRef(weightBrush);
   const graphToolRef = useRef(graphTool);
   const weightEditorRef = useRef(weightEditor);
+  const nodeRenameEditorRef = useRef(nodeRenameEditor);
   const onGridEditRef = useRef(onGridEdit);
   const onMoveVertexRef = useRef(onMoveVertex);
   const onGraphEditRef = useRef(onGraphEdit);
@@ -176,6 +183,7 @@ export function Viewport({
   weightBrushRef.current = weightBrush;
   graphToolRef.current = graphTool;
   weightEditorRef.current = weightEditor;
+  nodeRenameEditorRef.current = nodeRenameEditor;
   onGridEditRef.current = onGridEdit;
   onMoveVertexRef.current = onMoveVertex;
   onGraphEditRef.current = onGraphEdit;
@@ -187,6 +195,7 @@ export function Viewport({
     const activeProblem = problemRef.current;
     const states = activePlayer ? activePlayer.states : activeProblem.initialStates();
     const activeWeightEditor = weightEditorRef.current;
+    const activeNodeRenameEditor = nodeRenameEditorRef.current;
 
     renderer.render(activeProblem, states, {
       path: pathRef.current,
@@ -198,6 +207,7 @@ export function Viewport({
       showGridTree: showGridTreeRef.current,
       hoverNode: hoverNodeRef.current,
       dragNode: draggedVertexRef.current,
+      selectedNode: activeNodeRenameEditor ? activeNodeRenameEditor.node : null,
       selectedEdge: activeWeightEditor
         ? { u: activeWeightEditor.u, v: activeWeightEditor.v }
         : null,
@@ -262,6 +272,7 @@ export function Viewport({
     if (problem.kind !== 'graph' || !(problem as AdjacencyGraphProblem).weighted) {
       setWeightEditor(null);
     }
+    setNodeRenameEditor(null);
   }, [problem]);
 
   useEffect(() => {
@@ -270,6 +281,13 @@ export function Viewport({
       weightInputRef.current.select();
     }
   }, [weightEditor]);
+
+  useEffect(() => {
+    if (nodeRenameEditor && nodeRenameInputRef.current) {
+      nodeRenameInputRef.current.focus();
+      nodeRenameInputRef.current.select();
+    }
+  }, [nodeRenameEditor]);
 
   useEffect(() => {
     drawFrame();
@@ -282,7 +300,7 @@ export function Viewport({
       stepCounterRef.current.textContent = `${cur} / ${total}`;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [problem, player, path, showGridTree, graphTool, weightEditor, renderTick]);
+  }, [problem, player, path, showGridTree, graphTool, weightEditor, nodeRenameEditor, renderTick]);
 
   useEffect(() => {
     if (!playing || !player) return;
@@ -359,27 +377,31 @@ export function Viewport({
     }
   };
 
-  const openEdgeWeightEditor = (hit: EdgeHitResult) => {
+  const clampPopoverCoords = (canvasX: number, canvasY: number, popoverWidth: number) => {
     const canvas = canvasRef.current;
     const stage = stageRef.current;
-    if (!canvas || !stage) {
-      setWeightEditor({ u: hit.u, v: hit.v, left: hit.canvasX, top: hit.canvasY });
-      setWeightInput(String(hit.cost));
-      return;
-    }
-
-    const offsetLeft = canvas.offsetLeft + hit.canvasX;
-    const offsetTop = canvas.offsetTop + hit.canvasY;
-    const maxLeft = Math.max(16, stage.clientWidth - 156);
+    if (!canvas || !stage) return { left: canvasX, top: canvasY };
+    const maxLeft = Math.max(16, stage.clientWidth - popoverWidth);
     const maxTop = Math.max(16, stage.clientHeight - 44);
+    return {
+      left: Math.max(12, Math.min(maxLeft, canvas.offsetLeft + canvasX)),
+      top: Math.max(12, Math.min(maxTop, canvas.offsetTop + canvasY)),
+    };
+  };
 
-    setWeightEditor({
-      u: hit.u,
-      v: hit.v,
-      left: Math.max(12, Math.min(maxLeft, offsetLeft)),
-      top: Math.max(12, Math.min(maxTop, offsetTop)),
-    });
+  const openEdgeWeightEditor = (hit: EdgeHitResult) => {
+    setNodeRenameEditor(null);
+    const { left, top } = clampPopoverCoords(hit.canvasX, hit.canvasY, 156);
+    setWeightEditor({ u: hit.u, v: hit.v, left, top });
     setWeightInput(String(hit.cost));
+  };
+
+  const openNodeRenameEditor = (graph: AdjacencyGraphProblem, node: NodeId) => {
+    setWeightEditor(null);
+    const pos = rendererRef.current?.graphNodeScreenPosition(node);
+    const { left, top } = pos ? clampPopoverCoords(pos.x, pos.y, 216) : { left: 110, top: 44 };
+    setNodeRenameEditor({ node, defaultLabel: graph.defaultLabel(node), left, top });
+    setNodeRenameInput(graph.customLabel(node) ?? '');
   };
 
   const updateCursor = (node: NodeId | null) => {
@@ -395,7 +417,12 @@ export function Viewport({
         canvas.style.cursor = node !== null ? 'grab' : 'copy';
       } else if (tool === 'add-edge') {
         canvas.style.cursor = node !== null ? 'crosshair' : 'default';
-      } else if (tool === 'erase' || tool === 'set-start' || tool === 'set-goal') {
+      } else if (
+        tool === 'erase' ||
+        tool === 'set-start' ||
+        tool === 'set-goal' ||
+        tool === 'rename'
+      ) {
         canvas.style.cursor = node !== null ? 'pointer' : 'default';
       } else {
         canvas.style.cursor = node !== null ? 'grab' : 'default';
@@ -414,6 +441,9 @@ export function Viewport({
     if (weightEditorRef.current) {
       setWeightEditor(null);
     }
+    if (nodeRenameEditorRef.current) {
+      setNodeRenameEditor(null);
+    }
 
     const node = renderer.hitTest(activeProblem, e.clientX, e.clientY);
 
@@ -428,6 +458,11 @@ export function Viewport({
 
       if (tool === 'set-goal') {
         if (node !== null) onGraphEditRef.current({ type: 'move-goal', node });
+        return;
+      }
+
+      if (tool === 'rename') {
+        if (node !== null) openNodeRenameEditor(graph, node);
         return;
       }
 
@@ -620,6 +655,39 @@ export function Viewport({
     setWeightEditor(null);
   };
 
+  const handleDoubleClick = (e: MouseEvent<HTMLCanvasElement>) => {
+    const renderer = rendererRef.current;
+    const activeProblem = problemRef.current;
+    if (!renderer || activeProblem.kind !== 'graph') return;
+    const tool = graphToolRef.current;
+    if (tool === 'erase' || tool === 'set-start' || tool === 'set-goal') return;
+    const node = renderer.hitTest(activeProblem, e.clientX, e.clientY);
+    if (node !== null) {
+      openNodeRenameEditor(activeProblem as AdjacencyGraphProblem, node);
+    }
+  };
+
+  const handleNodeRenameSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!nodeRenameEditor) return;
+    onGraphEdit({
+      type: 'rename-vertex',
+      node: nodeRenameEditor.node,
+      label: nodeRenameInput,
+    });
+    setNodeRenameEditor(null);
+  };
+
+  const handleResetNodeName = () => {
+    if (!nodeRenameEditor) return;
+    onGraphEdit({
+      type: 'rename-vertex',
+      node: nodeRenameEditor.node,
+      label: '',
+    });
+    setNodeRenameEditor(null);
+  };
+
   return (
     <div ref={stageRef} className="canvas-stage">
       <canvas
@@ -630,6 +698,7 @@ export function Viewport({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
+        onDoubleClick={handleDoubleClick}
       />
 
       {weightEditor && (
@@ -645,7 +714,9 @@ export function Viewport({
           }}
         >
           <span className="edge-weight-label">
-            {weightEditor.u}→{weightEditor.v}
+            {problem.kind === 'graph'
+              ? `${(problem as AdjacencyGraphProblem).displayLabel(weightEditor.u)}→${(problem as AdjacencyGraphProblem).displayLabel(weightEditor.v)}`
+              : `${weightEditor.u}→${weightEditor.v}`}
           </span>
           <input
             ref={weightInputRef}
@@ -663,6 +734,40 @@ export function Viewport({
             onClick={handleDeleteSelectedEdge}
           >
             Del
+          </button>
+        </form>
+      )}
+
+      {nodeRenameEditor && (
+        <form
+          className="edge-weight-popover node-rename-popover"
+          style={{ left: nodeRenameEditor.left, top: nodeRenameEditor.top }}
+          onSubmit={handleNodeRenameSubmit}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              setNodeRenameEditor(null);
+            }
+          }}
+        >
+          <span className="edge-weight-label">#{nodeRenameEditor.node}</span>
+          <input
+            ref={nodeRenameInputRef}
+            className="node-rename-input"
+            type="text"
+            maxLength={24}
+            aria-label="Node name"
+            placeholder={nodeRenameEditor.defaultLabel}
+            value={nodeRenameInput}
+            onChange={(e) => setNodeRenameInput(e.target.value)}
+          />
+          <button type="submit">OK</button>
+          <button
+            type="button"
+            aria-label="Reset node name"
+            onClick={handleResetNodeName}
+          >
+            Reset
           </button>
         </form>
       )}
