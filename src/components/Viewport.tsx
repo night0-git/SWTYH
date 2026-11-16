@@ -269,9 +269,7 @@ export function Viewport({
   }, []);
 
   useEffect(() => {
-    if (problem.kind !== 'graph' || !(problem as AdjacencyGraphProblem).weighted) {
-      setWeightEditor(null);
-    }
+    setWeightEditor(null);
     setNodeRenameEditor(null);
   }, [problem]);
 

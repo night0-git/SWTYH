@@ -562,4 +562,47 @@ describe('simulationReducer replay & editing hot paths', () => {
     expect(s.player!.isAtEnd).toBe(true);
     expect((s.problem as AdjacencyGraphProblem).displayLabel(0)).toBe('S');
   });
+
+  it('randomizes grid and graph with specified node counts and resets active replay state', () => {
+    let s = createInitialSimulationState();
+    s = simulationReducer(s, { type: 'toggle-diagonal' });
+    s = simulationReducer(s, {
+      type: 'play-toggle',
+      currentCursor: 0,
+      isAtEnd: false,
+    });
+    expect(s.playing).toBe(true);
+    expect(s.player).not.toBeNull();
+
+    // Randomize grid while playing stops playback, clears trace, preserves allowDiagonal.
+    s = simulationReducer(s, { type: 'randomize', nodeCount: 150 });
+    expect(s.problem.kind).toBe('grid');
+    expect(s.problem.nodeCount).toBe(150);
+    expect((s.problem as Grid2DProblem).allowDiagonal).toBe(true);
+    expect(s.playing).toBe(false);
+    expect(s.player).toBeNull();
+    expect(s.runResult).toBeNull();
+    expect(s.cursor).toBe(0);
+
+    // Switch to directed/unweighted graph and randomize with custom nodeCount.
+    s = simulationReducer(s, { type: 'select-preset', presetId: 'directed-graph' });
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'toggle-weighted' },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    s = simulationReducer(s, { type: 'jump-end' });
+    expect(s.player).not.toBeNull();
+
+    s = simulationReducer(s, { type: 'randomize', nodeCount: 18 });
+    expect(s.problem.kind).toBe('graph');
+    const graph = s.problem as AdjacencyGraphProblem;
+    expect(graph.nodeCount).toBe(18);
+    expect(graph.directed).toBe(true);
+    expect(graph.weighted).toBe(false);
+    expect(s.player).toBeNull();
+    expect(s.runResult).toBeNull();
+    expect(s.cursor).toBe(0);
+  });
 });

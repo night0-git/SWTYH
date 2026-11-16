@@ -1,6 +1,7 @@
 import type { AdjacencyGraphProblem } from '../engine/graphProblem';
 import { Grid2DProblem } from '../engine/gridProblem';
 import { buildPreset, type PresetId } from '../engine/presets';
+import { randomizeGraph, randomizeGrid } from '../engine/randomize';
 import { algorithms, getAlgorithm } from '../engine/registry';
 import { runAlgorithm } from '../engine/runner';
 import {
@@ -73,6 +74,7 @@ export type SimulationAction =
   | { readonly type: 'select-preset'; readonly presetId: PresetId }
   | { readonly type: 'reset-preset' }
   | { readonly type: 'regen-maze' }
+  | { readonly type: 'randomize'; readonly nodeCount: number; readonly rng?: () => number }
   | { readonly type: 'clear-grid' }
   | { readonly type: 'toggle-diagonal' }
   | {
@@ -412,6 +414,31 @@ export function simulationReducer(
         playing: false,
         renderTick: state.renderTick + 1,
       };
+
+    case 'randomize': {
+      const nextProblem =
+        state.problem.kind === 'grid'
+          ? randomizeGrid({
+              nodeCount: action.nodeCount,
+              allowDiagonal: state.allowDiagonal,
+              rng: action.rng,
+            })
+          : randomizeGraph({
+              nodeCount: action.nodeCount,
+              directed: (state.problem as AdjacencyGraphProblem).directed,
+              weighted: (state.problem as AdjacencyGraphProblem).weighted,
+              rng: action.rng,
+            });
+      return {
+        ...state,
+        problem: nextProblem,
+        runResult: null,
+        player: null,
+        cursor: 0,
+        playing: false,
+        renderTick: state.renderTick + 1,
+      };
+    }
 
     case 'clear-grid': {
       if (state.problem.kind !== 'grid') return state;

@@ -11,6 +11,13 @@ import {
 import { evaluateCompatibility } from '../engine/compatibility';
 import type { AdjacencyGraphProblem } from '../engine/graphProblem';
 import { PRESETS, type PresetId } from '../engine/presets';
+import {
+  clampRandomNodeCount,
+  MAX_RANDOM_GRAPH_NODES,
+  MAX_RANDOM_GRID_NODES,
+  MIN_RANDOM_GRAPH_NODES,
+  MIN_RANDOM_GRID_NODES,
+} from '../engine/randomize';
 import { groupAlgorithmsByCategory } from '../engine/registry';
 import type { NodeId, Point2D } from '../engine/types';
 import { CodeView, syncCodeHighlightDom } from './CodeView';
@@ -84,6 +91,24 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
   const [algoHeight, setAlgoHeight] = useState<number | null>(null);
   const [expandedPane, setExpandedPane] = useState<'algorithm' | 'code' | null>(null);
+  const [nodeCountDraft, setNodeCountDraft] = useState<string>(() =>
+    String(state.problem.nodeCount),
+  );
+
+  useEffect(() => {
+    setNodeCountDraft(String(state.problem.nodeCount));
+  }, [state.problem]);
+
+  const handleRandomize = useCallback(() => {
+    const parsed = Number(nodeCountDraft);
+    const target = clampRandomNodeCount(
+      state.problem.kind,
+      nodeCountDraft.trim() === '' ? state.problem.nodeCount : parsed,
+      state.problem.nodeCount,
+    );
+    setNodeCountDraft(String(target));
+    dispatch({ type: 'randomize', nodeCount: target });
+  }, [nodeCountDraft, state.problem.kind, state.problem.nodeCount]);
 
   const playerRef = useRef(state.player);
   playerRef.current = state.player;
@@ -306,6 +331,30 @@ export function App() {
                 Regen
               </button>
             )}
+          </div>
+
+          <div className="control-group">
+            <label className="field-label" htmlFor="node-count-input">
+              Nodes
+            </label>
+            <input
+              id="node-count-input"
+              className="node-count-input"
+              type="number"
+              min={problem.kind === 'grid' ? MIN_RANDOM_GRID_NODES : MIN_RANDOM_GRAPH_NODES}
+              max={problem.kind === 'grid' ? MAX_RANDOM_GRID_NODES : MAX_RANDOM_GRAPH_NODES}
+              value={nodeCountDraft}
+              onChange={(e) => setNodeCountDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleRandomize();
+                }
+              }}
+            />
+            <button type="button" onClick={handleRandomize}>
+              Randomize
+            </button>
           </div>
 
           <label className="topbar-checkbox">

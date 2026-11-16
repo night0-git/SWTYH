@@ -103,7 +103,8 @@ body,
 }
 
 select,
-button {
+button,
+.node-count-input {
   height: 26px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -112,9 +113,20 @@ button {
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius);
   padding: 0 8px;
+}
+
+select,
+button {
   cursor: pointer;
 }
 
+.node-count-input {
+  width: 68px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-count-input:hover,
 select:hover,
 button:hover:not(:disabled) {
   border-color: var(--border-strong);

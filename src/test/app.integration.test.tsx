@@ -680,4 +680,48 @@ describe('<App /> UI integration', () => {
     fireEvent.pointerMove(canvas, { clientX: 92, clientY: 244 });
     expect(hoverEl.textContent).toContain('vertex S ·');
   });
+
+  it('randomizes grid and graph with user-specified node counts', () => {
+    render(<App />);
+
+    const nodeInput = screen.getByRole('spinbutton', { name: 'Nodes' }) as HTMLInputElement;
+    const randomizeBtn = screen.getByRole('button', { name: 'Randomize' });
+    expect(nodeInput.value).toBe('735');
+
+    // Global shortcuts must not trigger while focused on Nodes input.
+    fireEvent.keyDown(nodeInput, { code: 'Space' });
+    fireEvent.keyDown(nodeInput, { code: 'ArrowRight' });
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
+    expect(screen.getByText('0 / 0')).toBeTruthy();
+
+    // Randomize Grid to 100 nodes, then run search to End.
+    fireEvent.change(nodeInput, { target: { value: '100' } });
+    fireEvent.click(randomizeBtn);
+    expect(nodeInput.value).toBe('100');
+
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    const gridPathNodes = Number(document.querySelectorAll('.telemetry-value')[1]?.textContent);
+    expect(gridPathNodes).toBeGreaterThan(0);
+
+    // Switch to Graph -> node input syncs to preset node count (10).
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'sample-graph' },
+    });
+    expect(nodeInput.value).toBe('10');
+
+    // Specify 16 nodes and submit via Enter key in the input.
+    fireEvent.change(nodeInput, { target: { value: '16' } });
+    fireEvent.keyDown(nodeInput, { key: 'Enter' });
+    expect(nodeInput.value).toBe('16');
+    expect(screen.getByText('0 / 0')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    const graphPathNodes = Number(document.querySelectorAll('.telemetry-value')[1]?.textContent);
+    expect(graphPathNodes).toBeGreaterThan(0);
+
+    // Out-of-range graph count clamps cleanly to max (120).
+    fireEvent.change(nodeInput, { target: { value: '500' } });
+    fireEvent.click(randomizeBtn);
+    expect(nodeInput.value).toBe('120');
+  });
 });
