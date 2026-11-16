@@ -421,12 +421,14 @@ export function simulationReducer(
           ? randomizeGrid({
               nodeCount: action.nodeCount,
               allowDiagonal: state.allowDiagonal,
+              presetId: state.presetId,
               rng: action.rng,
             })
           : randomizeGraph({
               nodeCount: action.nodeCount,
               directed: (state.problem as AdjacencyGraphProblem).directed,
               weighted: (state.problem as AdjacencyGraphProblem).weighted,
+              presetId: state.presetId,
               rng: action.rng,
             });
       return {

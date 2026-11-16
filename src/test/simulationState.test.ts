@@ -604,5 +604,21 @@ describe('simulationReducer replay & editing hot paths', () => {
     expect(s.player).toBeNull();
     expect(s.runResult).toBeNull();
     expect(s.cursor).toBe(0);
+
+    // Randomize on blank-graph preserves empty-edge theme with requested nodeCount.
+    s = simulationReducer(s, { type: 'select-preset', presetId: 'blank-graph' });
+    s = simulationReducer(s, { type: 'randomize', nodeCount: 9 });
+    const blankGraph = s.problem as AdjacencyGraphProblem;
+    expect(blankGraph.nodeCount).toBe(9);
+    for (let u = 0; u < blankGraph.nodeCount; u += 1) {
+      expect(blankGraph.neighbors(u)).toHaveLength(0);
+    }
+
+    // Randomize on open-field keeps zero walls and unit weights.
+    s = simulationReducer(s, { type: 'select-preset', presetId: 'open-field' });
+    s = simulationReducer(s, { type: 'randomize', nodeCount: 60 });
+    const openGrid = s.problem as Grid2DProblem;
+    expect(openGrid.nodeCount).toBe(60);
+    expect(openGrid.walls.every((w) => w === 0)).toBe(true);
   });
 });
