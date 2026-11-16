@@ -491,6 +491,7 @@ export function App() {
             playing={playing}
             stepsPerSecond={state.stepsPerSecond}
             showGridTree={state.showGridTree}
+            showHeuristic={Boolean(selected?.meta.usesHeuristic)}
             renderTick={state.renderTick}
             drawTool={state.drawTool}
             weightBrush={state.weightBrush}

@@ -89,7 +89,8 @@ function formatHoverLabel(
     return `cell (${x}, ${y}) #${node} · ${stateName} · w:${w} · h:${h}`;
   }
   const graph = problem as AdjacencyGraphProblem;
-  const h = graph.heuristic(node).toFixed(1);
+  const hVal = graph.heuristic(node);
+  const h = Number.isInteger(hVal) ? String(hVal) : hVal.toFixed(1);
   const neighbors = formatGraphNeighbors(graph, node);
   return `vertex ${graph.displayLabel(node, true)} · ${stateName} · h:${h} · neighbors: ${neighbors}`;
 }
@@ -101,6 +102,7 @@ interface ViewportProps {
   readonly playing: boolean;
   readonly stepsPerSecond: number;
   readonly showGridTree: boolean;
+  readonly showHeuristic: boolean;
   readonly renderTick: number;
   readonly drawTool: DrawTool;
   readonly weightBrush: WeightBrush;
@@ -123,6 +125,7 @@ export function Viewport({
   playing,
   stepsPerSecond,
   showGridTree,
+  showHeuristic,
   renderTick,
   drawTool,
   weightBrush,
@@ -165,6 +168,7 @@ export function Viewport({
   const pathRef = useRef(path);
   const playingRef = useRef(playing);
   const showGridTreeRef = useRef(showGridTree);
+  const showHeuristicRef = useRef(showHeuristic);
   const drawToolRef = useRef(drawTool);
   const weightBrushRef = useRef(weightBrush);
   const graphToolRef = useRef(graphTool);
@@ -179,6 +183,7 @@ export function Viewport({
   pathRef.current = path;
   playingRef.current = playing;
   showGridTreeRef.current = showGridTree;
+  showHeuristicRef.current = showHeuristic;
   drawToolRef.current = drawTool;
   weightBrushRef.current = weightBrush;
   graphToolRef.current = graphTool;
@@ -205,6 +210,7 @@ export function Viewport({
       activeEdgeFrom: activePlayer ? activePlayer.activeEdgeFrom : -1,
       activeEdgeTo: activePlayer ? activePlayer.activeEdgeTo : -1,
       showGridTree: showGridTreeRef.current,
+      showHeuristic: showHeuristicRef.current,
       hoverNode: hoverNodeRef.current,
       dragNode: draggedVertexRef.current,
       selectedNode: activeNodeRenameEditor ? activeNodeRenameEditor.node : null,
@@ -298,7 +304,7 @@ export function Viewport({
       stepCounterRef.current.textContent = `${cur} / ${total}`;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [problem, player, path, showGridTree, graphTool, weightEditor, nodeRenameEditor, renderTick]);
+  }, [problem, player, path, showGridTree, showHeuristic, graphTool, weightEditor, nodeRenameEditor, renderTick]);
 
   useEffect(() => {
     if (!playing || !player) return;

@@ -102,6 +102,7 @@ export class AdjacencyGraphProblem implements SearchProblem {
   readonly bounds: Bounds2D;
   readonly labels: readonly (string | null)[] | null;
   readonly defaultLabels: readonly (string | null)[] | null;
+  private readonly maxEdgeDist: number;
 
   constructor(options: GraphOptions) {
     this.nodeCount = options.nodeCount;
@@ -115,6 +116,21 @@ export class AdjacencyGraphProblem implements SearchProblem {
     this.bounds = options.bounds ?? computeBounds(this.positions);
     this.labels = normalizeLabelArray(this.nodeCount, options.labels);
     this.defaultLabels = normalizeLabelArray(this.nodeCount, options.defaultLabels);
+
+    let maxEdgeDist = 0;
+    if (this.positions) {
+      for (let u = 0; u < this.nodeCount; u += 1) {
+        const pu = this.positions[u];
+        if (!pu) continue;
+        for (const edge of this.rawAdjacency[u] ?? []) {
+          const pv = this.positions[edge.node];
+          if (!pv) continue;
+          const d = Math.hypot(pu.x - pv.x, pu.y - pv.y);
+          if (d > maxEdgeDist) maxEdgeDist = d;
+        }
+      }
+    }
+    this.maxEdgeDist = maxEdgeDist;
   }
 
   private cloneWith(overrides: Partial<GraphOptions>): AdjacencyGraphProblem {
@@ -158,12 +174,20 @@ export class AdjacencyGraphProblem implements SearchProblem {
     return this.rawAdjacency[node] ?? [];
   }
 
-  heuristic(node: NodeId, target: NodeId = this.goal): number {
+  euclideanDistance(node: NodeId, target: NodeId = this.goal): number {
     if (!this.positions) return 0;
     const a = this.positions[node];
     const b = this.positions[target];
     if (!a || !b) return 0;
     return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  heuristic(node: NodeId, target: NodeId = this.goal): number {
+    const dist = this.euclideanDistance(node, target);
+    if (!this.weighted && this.maxEdgeDist > 0) {
+      return Math.round(dist / this.maxEdgeDist);
+    }
+    return Math.round(dist);
   }
 
   position(node: NodeId): Point2D | null {

@@ -621,4 +621,26 @@ describe('simulationReducer replay & editing hot paths', () => {
     expect(openGrid.nodeCount).toBe(60);
     expect(openGrid.walls.every((w) => w === 0)).toBe(true);
   });
+
+  it('uses Euclidean distance for default raw edge weight even on unweighted graphs', () => {
+    let s = createInitialSimulationState();
+    s = simulationReducer(s, { type: 'select-preset', presetId: 'blank-graph' });
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'toggle-weighted' },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    expect((s.problem as AdjacencyGraphProblem).weighted).toBe(false);
+
+    // Blank graph has Start at (20,50) and Goal at (80,50) -> Euclidean distance = 60.
+    s = simulationReducer(s, {
+      type: 'graph-edit',
+      edit: { type: 'add-edge', u: 0, v: 1 },
+      currentCursor: 0,
+      wasAtEnd: false,
+    });
+    const updated = s.problem as AdjacencyGraphProblem;
+    expect(updated.rawNeighbors(0)[0]?.cost).toBe(60);
+  });
 });

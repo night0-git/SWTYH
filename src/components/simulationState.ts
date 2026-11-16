@@ -182,7 +182,7 @@ export function applyGraphEdit(
     case 'rename-vertex':
       return graph.withRenamedVertex(edit.node, edit.label);
     case 'add-edge': {
-      const defaultCost = Math.max(1, Math.round(graph.heuristic(edit.u, edit.v)));
+      const defaultCost = Math.max(1, Math.round(graph.euclideanDistance(edit.u, edit.v)));
       return graph.withAddedEdge(edit.u, edit.v, edit.cost ?? defaultCost);
     }
     case 'set-edge-weight':

@@ -724,4 +724,52 @@ describe('<App /> UI integration', () => {
     fireEvent.click(randomizeBtn);
     expect(nodeInput.value).toBe('120');
   });
+
+  it('shows canvas heuristic labels only when an informed algorithm is selected', () => {
+    const fillCalls: string[] = [];
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(function (this: HTMLCanvasElement, contextId: string) {
+        const ctx = origGetContext.call(this, contextId as '2d') as CanvasRenderingContext2D | null;
+        if (ctx && contextId === '2d') {
+          const origFill = ctx.fillText.bind(ctx);
+          ctx.fillText = (text: string, x: number, y: number) => {
+            fillCalls.push(text);
+            origFill(text, x, y);
+          };
+        }
+        return ctx;
+      } as unknown as typeof HTMLCanvasElement.prototype.getContext);
+
+    try {
+      render(<App />);
+      const canvas = document.querySelector('canvas')!;
+      mockCanvasBox(canvas, 688, 488);
+
+      // Default algorithm is A* (informed). Switch to sample-graph -> heuristic values render (S has h=84).
+      fillCalls.length = 0;
+      fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+        target: { value: 'sample-graph' },
+      });
+      expect(fillCalls).toContain('84');
+      expect(fillCalls.some((t) => t.startsWith('h:'))).toBe(false);
+
+      // Switch to BFS (uninformed) -> heuristic values disappear.
+      fillCalls.length = 0;
+      fireEvent.change(screen.getByRole('combobox', { name: 'Algorithm' }), {
+        target: { value: 'bfs' },
+      });
+      expect(fillCalls).not.toContain('84');
+
+      // Switch to Greedy Best-First (informed) -> heuristic values reappear.
+      fillCalls.length = 0;
+      fireEvent.change(screen.getByRole('combobox', { name: 'Algorithm' }), {
+        target: { value: 'greedy-best-first' },
+      });
+      expect(fillCalls).toContain('84');
+    } finally {
+      getContextSpy.mockRestore();
+    }
+  });
 });

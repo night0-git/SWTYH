@@ -236,4 +236,68 @@ describe('SearchCanvasRenderer hitTest, coordinate mapping, and rendering', () =
     expect(drawnLabels.some((t) => t.endsWith('…'))).toBe(true);
     expect(strokeColors).toContain('#1d4ed8');
   });
+
+  it('draws heuristic values on graph vertices and large grid cells only when showHeuristic is enabled', () => {
+    const canvas = createSizedCanvas(688, 488);
+    const ctx = canvas.getContext('2d')!;
+    vi.spyOn(canvas, 'getContext').mockImplementation(
+      ((id: string) => (id === '2d' ? ctx : null)) as unknown as typeof canvas.getContext,
+    );
+    const renderer = new SearchCanvasRenderer(canvas);
+
+    // 1) Graph: vertex heuristic value badges appear iff showHeuristic is true (without 'h' prefix).
+    const graph = buildPreset('sample-graph', false) as AdjacencyGraphProblem;
+    const drawnText: { text: string; x: number; y: number }[] = [];
+    const origFillText = ctx.fillText.bind(ctx);
+    vi.spyOn(ctx, 'fillText').mockImplementation((text, x, y) => {
+      drawnText.push({ text, x, y });
+      origFillText(text, x, y);
+    });
+
+    renderer.render(graph, graph.initialStates(), { showHeuristic: false });
+    expect(drawnText.some((d) => d.text === '84' || d.text === '0')).toBe(false);
+
+    drawnText.length = 0;
+    renderer.render(graph, graph.initialStates(), { showHeuristic: true });
+    expect(drawnText.some((d) => d.text.startsWith('h'))).toBe(false);
+    expect(drawnText.some((d) => d.text === '84')).toBe(true);
+    expect(drawnText.some((d) => d.text === '0')).toBe(true);
+
+    // 2) Grid (including smaller 20px cells): draws weight and raw heuristic values vertically separated.
+    const smallGrid = new Grid2DProblem({
+      cols: 6,
+      rows: 4,
+      start: { x: 0, y: 0 },
+      goal: { x: 5, y: 3 },
+      weights: Float32Array.from({ length: 24 }, (_, idx) => (idx === 1 ? 5 : 1)),
+    });
+    const bigCanvas = createSizedCanvas(144, 104); // 6*20 + 24, 4*20 + 24 -> cellSize = 20
+    const bigCtx = bigCanvas.getContext('2d')!;
+    vi.spyOn(bigCanvas, 'getContext').mockImplementation(
+      ((id: string) => (id === '2d' ? bigCtx : null)) as unknown as typeof bigCanvas.getContext,
+    );
+    const bigRenderer = new SearchCanvasRenderer(bigCanvas);
+    const gridDrawn: { text: string; x: number; y: number }[] = [];
+    const origBigFill = bigCtx.fillText.bind(bigCtx);
+    vi.spyOn(bigCtx, 'fillText').mockImplementation((text, x, y) => {
+      gridDrawn.push({ text, x, y });
+      origBigFill(text, x, y);
+    });
+
+    bigRenderer.render(smallGrid, smallGrid.initialStates(), { showHeuristic: false });
+    expect(gridDrawn).toHaveLength(3); // S, G, and weight '5'
+    expect(gridDrawn.some((d) => d.text === '5')).toBe(true);
+
+    gridDrawn.length = 0;
+    bigRenderer.render(smallGrid, smallGrid.initialStates(), { showHeuristic: true });
+    expect(gridDrawn.some((d) => d.text.startsWith('h'))).toBe(false);
+    const weightCall = gridDrawn.find((d) => d.text === '5');
+    // Cell (1, 0) has weight 5 and Manhattan distance |1-5| + |0-3| = 7.
+    const heuristicCall = gridDrawn.find(
+      (d) => d.text === '7' && weightCall && Math.abs(d.x - weightCall.x) < 1,
+    );
+    expect(weightCall).toBeTruthy();
+    expect(heuristicCall).toBeTruthy();
+    expect(heuristicCall!.y).toBeGreaterThan(weightCall!.y);
+  });
 });

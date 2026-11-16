@@ -392,4 +392,24 @@ describe('Compatibility analyzer and ground-truth optimality warnings', () => {
     );
     expect(runAlgorithm(gbfs.search, blankUnreachable).path).toBeNull();
   });
+
+  it('rounds graph heuristics and scales unweighted graph heuristics by max edge length', () => {
+    const astar = getAlgorithm('astar')!;
+    const weightedGraph = buildPreset('sample-graph', false) as AdjacencyGraphProblem;
+    const unweightedGraph = buildPreset('unweighted-graph', false) as AdjacencyGraphProblem;
+
+    // Weighted graph uses rounded Euclidean distances.
+    expect(weightedGraph.heuristic(0)).toBe(84);
+    expect(weightedGraph.heuristic(1)).toBe(72); // hypot(66, 30) = 72.498... -> 72
+    expect(Number.isInteger(weightedGraph.heuristic(2))).toBe(true);
+
+    // Unweighted graph scales by maxEdgeDist (40 in sample-graph) to estimate integer hops.
+    expect(unweightedGraph.heuristic(0)).toBe(2); // round(84 / 40) = 2
+    expect(unweightedGraph.heuristic(4)).toBe(1); // round(40 / 40) = 1
+    expect(unweightedGraph.heuristic(unweightedGraph.goal)).toBe(0);
+
+    const unweightedRun = runAlgorithm(astar.search, unweightedGraph);
+    const report = evaluateCompatibility(astar, unweightedGraph, unweightedRun);
+    expect(report.warnings).toEqual([]);
+  });
 });

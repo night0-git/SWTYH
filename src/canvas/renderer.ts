@@ -78,11 +78,17 @@ export interface RenderOptions {
   readonly activeEdgeFrom?: NodeId;
   readonly activeEdgeTo?: NodeId;
   readonly showGridTree?: boolean;
+  readonly showHeuristic?: boolean;
   readonly hoverNode?: NodeId | null;
   readonly dragNode?: NodeId | null;
   readonly selectedNode?: NodeId | null;
   readonly selectedEdge?: { readonly u: NodeId; readonly v: NodeId } | null;
   readonly draftEdge?: { readonly from: NodeId; readonly toX: number; readonly toY: number } | null;
+}
+
+function formatHeuristicValue(h: number): string {
+  const rounded = Math.round(h * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function readPalette(el: HTMLElement): Palette {
@@ -497,12 +503,27 @@ export class SearchCanvasRenderer {
 
     const colors = this.palette.states;
     const showWeightNumbers = cellSize >= 17;
-    if (showWeightNumbers) {
-      const wFont = Math.max(8, Math.floor(cellSize * 0.36));
-      ctx.font = `600 ${wFont}px ${this.palette.monoFont}`;
+    const showHeuristicNumbers = Boolean(options.showHeuristic) && cellSize >= 17;
+    const wFont = Math.max(7, Math.floor(cellSize * (showHeuristicNumbers ? 0.3 : 0.36)));
+    const hFont = Math.max(7, Math.floor(cellSize * 0.27));
+    const weightFontSpec = `600 ${wFont}px ${this.palette.monoFont}`;
+    const heuristicFontSpec = `500 ${hFont}px ${this.palette.monoFont}`;
+
+    if (showWeightNumbers || showHeuristicNumbers) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
     }
+
+    const drawGridHeuristic = (id: NodeId, x: number, y: number, hasWeight: boolean, state: number) => {
+      const label = formatHeuristicValue(grid.heuristic(id));
+      ctx.font = heuristicFontSpec;
+      ctx.fillStyle = state === NodeState.Current ? this.palette.ink : this.palette.inkSecondary;
+      ctx.fillText(
+        label,
+        x + cellSize * 0.5,
+        y + cellSize * (hasWeight ? 0.72 : 0.52),
+      );
+    };
 
     for (let r = 0; r < grid.rows; r += 1) {
       const y = offsetY + r * cellSize;
@@ -518,9 +539,17 @@ export class SearchCanvasRenderer {
             ctx.fillStyle = this.weightFillFor(w);
             ctx.fillRect(x, y, cellSize, cellSize);
             if (showWeightNumbers) {
+              ctx.font = weightFontSpec;
               ctx.fillStyle = this.palette.weightInk;
-              ctx.fillText(String(w), x + cellSize * 0.5, y + cellSize * 0.52);
+              ctx.fillText(
+                String(w),
+                x + cellSize * 0.5,
+                y + cellSize * (showHeuristicNumbers ? 0.32 : 0.52),
+              );
             }
+          }
+          if (showHeuristicNumbers) {
+            drawGridHeuristic(id, x, y, w > 1, state);
           }
           continue;
         }
@@ -544,8 +573,23 @@ export class SearchCanvasRenderer {
           ctx.fill();
 
           if (showWeightNumbers && state !== NodeState.Path) {
-            ctx.fillText(String(w), x + cellSize * 0.5, y + cellSize * 0.52);
+            ctx.font = weightFontSpec;
+            ctx.fillText(
+              String(w),
+              x + cellSize * 0.5,
+              y + cellSize * (showHeuristicNumbers ? 0.32 : 0.52),
+            );
           }
+        }
+
+        if (
+          showHeuristicNumbers &&
+          state !== NodeState.Wall &&
+          state !== NodeState.Start &&
+          state !== NodeState.Goal &&
+          state !== NodeState.Path
+        ) {
+          drawGridHeuristic(id, x, y, w > 1, state);
         }
       }
     }
@@ -971,6 +1015,81 @@ export class SearchCanvasRenderer {
         radius,
         this.palette.monoFont,
       );
+    }
+
+    // Pass 4: Draw per-vertex heuristic badges when an informed algorithm is selected.
+    if (options.showHeuristic) {
+      const dirs: readonly [number, number][] = [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+        [0.707, 0.707],
+        [-0.707, 0.707],
+        [0.707, -0.707],
+        [-0.707, -0.707],
+      ];
+      ctx.font = `500 10px ${this.palette.monoFont}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (let u = 0; u < graph.nodeCount; u += 1) {
+        const pt = coords[u]!;
+        const label = formatHeuristicValue(graph.heuristic(u));
+        const boxW = Math.ceil(ctx.measureText(label).width) + 6;
+        const boxH = 14;
+
+        let bestX = pt.x;
+        let bestY = Math.min(height - boxH * 0.5 - 2, pt.y + radius + 10);
+        let bestScore = -Infinity;
+
+        for (let idx = 0; idx < dirs.length; idx += 1) {
+          const [dx, dy] = dirs[idx]!;
+          const cx = pt.x + dx * (radius + 9 + Math.abs(dx) * (boxW * 0.32));
+          const cy = pt.y + dy * (radius + 10);
+          if (
+            cx - boxW * 0.5 < 2 ||
+            cx + boxW * 0.5 > width - 2 ||
+            cy - boxH * 0.5 < 2 ||
+            cy + boxH * 0.5 > height - 2
+          ) {
+            continue;
+          }
+
+          let minClearance = Infinity;
+          for (const e of edges) {
+            const dEdge = Math.sqrt(distanceToEdgeSq(cx, cy, e));
+            if (dEdge < minClearance) minClearance = dEdge;
+            if (graph.weighted) {
+              const dMid = Math.hypot(cx - e.midX, cy - e.midY) - 6;
+              if (dMid < minClearance) minClearance = dMid;
+            }
+          }
+          for (let v = 0; v < coords.length; v += 1) {
+            if (v === u) continue;
+            const other = coords[v]!;
+            const dNode = Math.hypot(cx - other.x, cy - other.y) - radius;
+            if (dNode < minClearance) minClearance = dNode;
+          }
+
+          // Small preference for bottom/top slots when clearance is comparable.
+          const slotBias = (dirs.length - idx) * 0.05;
+          const score = minClearance + slotBias;
+          if (score > bestScore) {
+            bestScore = score;
+            bestX = cx;
+            bestY = cy;
+          }
+        }
+
+        ctx.fillStyle = this.palette.surface;
+        ctx.fillRect(bestX - boxW * 0.5, bestY - boxH * 0.5, boxW, boxH);
+        ctx.strokeStyle = this.palette.gridLine;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bestX - boxW * 0.5, bestY - boxH * 0.5, boxW, boxH);
+        ctx.fillStyle = this.palette.inkSecondary;
+        ctx.fillText(label, bestX, bestY + 0.5);
+      }
     }
   }
 }
