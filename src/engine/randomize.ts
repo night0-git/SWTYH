@@ -9,6 +9,7 @@ export const MIN_RANDOM_GRAPH_NODES = 2;
 export const MAX_RANDOM_GRAPH_NODES = 120;
 
 const GRID_TARGET_ASPECT = 35 / 21;
+const DEFAULT_MAX_INCIDENT_COS = 0.91; // ~24.5 degrees minimum separation
 
 export interface RandomizeGridOptions {
   readonly nodeCount: number;
@@ -519,13 +520,177 @@ export function randomizeGrid(options: RandomizeGridOptions): Grid2DProblem {
   });
 }
 
-export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphProblem {
-  const rng = options.rng ?? Math.random;
-  const n = clampRandomNodeCount('graph', options.nodeCount);
-  const directed = options.directed ?? false;
-  const weighted = options.weighted ?? true;
-  const presetId = options.presetId;
+export function pointToSegmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+  const projX = a.x + t * dx;
+  const projY = a.y + t * dy;
+  return Math.hypot(p.x - projX, p.y - projY);
+}
 
+function orient2D(p: Point2D, q: Point2D, r: Point2D): number {
+  return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+}
+
+function onSegmentBoundingBox(p: Point2D, a: Point2D, b: Point2D): boolean {
+  return (
+    p.x >= Math.min(a.x, b.x) - 1e-9 &&
+    p.x <= Math.max(a.x, b.x) + 1e-9 &&
+    p.y >= Math.min(a.y, b.y) - 1e-9 &&
+    p.y <= Math.max(a.y, b.y) + 1e-9
+  );
+}
+
+export function segmentsIntersect(a: Point2D, b: Point2D, c: Point2D, d: Point2D): boolean {
+  const o1 = orient2D(a, b, c);
+  const o2 = orient2D(a, b, d);
+  const o3 = orient2D(c, d, a);
+  const o4 = orient2D(c, d, b);
+
+  const eps = 1e-9;
+  if (((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
+      ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps))) {
+    return true;
+  }
+  if (Math.abs(o1) <= eps && onSegmentBoundingBox(c, a, b)) return true;
+  if (Math.abs(o2) <= eps && onSegmentBoundingBox(d, a, b)) return true;
+  if (Math.abs(o3) <= eps && onSegmentBoundingBox(a, c, d)) return true;
+  if (Math.abs(o4) <= eps && onSegmentBoundingBox(b, c, d)) return true;
+  return false;
+}
+
+export function segmentToSegmentDistance(
+  a: Point2D,
+  b: Point2D,
+  c: Point2D,
+  d: Point2D,
+): number {
+  if (segmentsIntersect(a, b, c, d)) return 0;
+  return Math.min(
+    pointToSegmentDistance(a, c, d),
+    pointToSegmentDistance(b, c, d),
+    pointToSegmentDistance(c, a, b),
+    pointToSegmentDistance(d, a, b),
+  );
+}
+
+export function minNodeEdgeClearanceForCount(n: number): number {
+  return Math.max(4.5, 11.5 - Math.sqrt(n) * 0.6);
+}
+
+export function minEdgeEdgeClearanceForCount(n: number): number {
+  return Math.max(2.8, minNodeEdgeClearanceForCount(n) * 0.58);
+}
+
+function edgeClearsNodes(
+  u: NodeId,
+  v: NodeId,
+  positions: readonly Point2D[],
+  minClearance: number,
+): boolean {
+  if (minClearance <= 0) return true;
+  const pu = positions[u]!;
+  const pv = positions[v]!;
+  for (let w = 0; w < positions.length; w += 1) {
+    if (w === u || w === v) continue;
+    if (pointToSegmentDistance(positions[w]!, pu, pv) < minClearance) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function edgeHasAngularSeparation(
+  u: NodeId,
+  v: NodeId,
+  adjacency: readonly (readonly Edge[])[],
+  positions: readonly Point2D[],
+  maxCos: number,
+): boolean {
+  if (maxCos >= 1) return true;
+  const pu = positions[u]!;
+  const pv = positions[v]!;
+  const ux = pv.x - pu.x;
+  const uy = pv.y - pu.y;
+  const lenUV = Math.hypot(ux, uy);
+  if (lenUV === 0) return false;
+
+  const checkAtEndpoint = (anchor: NodeId, other: NodeId, ax: number, ay: number): boolean => {
+    const pa = positions[anchor]!;
+    for (let x = 0; x < adjacency.length; x += 1) {
+      if (x === anchor || x === other) continue;
+      const connected =
+        adjacency[anchor]!.some((e) => e.node === x) ||
+        adjacency[x]!.some((e) => e.node === anchor);
+      if (!connected) continue;
+      const px = positions[x]!;
+      const bx = px.x - pa.x;
+      const by = px.y - pa.y;
+      const lenB = Math.hypot(bx, by);
+      if (lenB === 0) continue;
+      const cos = (ax * bx + ay * by) / (lenUV * lenB);
+      if (cos > maxCos) return false;
+    }
+    return true;
+  };
+
+  return checkAtEndpoint(u, v, ux, uy) && checkAtEndpoint(v, u, -ux, -uy);
+}
+
+function edgeClearsExistingEdges(
+  u: NodeId,
+  v: NodeId,
+  adjacency: readonly (readonly Edge[])[],
+  positions: readonly Point2D[],
+  minEdgeClearance: number,
+  forbidCrossings: boolean,
+): boolean {
+  if (!forbidCrossings && minEdgeClearance <= 0) return true;
+  const pu = positions[u]!;
+  const pv = positions[v]!;
+
+  for (let x = 0; x < adjacency.length; x += 1) {
+    if (x === u || x === v) continue;
+    const px = positions[x]!;
+    for (const e of adjacency[x]!) {
+      const y = e.node;
+      if (y === u || y === v || x === y) continue;
+      const py = positions[y]!;
+      if (minEdgeClearance > 0) {
+        if (segmentToSegmentDistance(pu, pv, px, py) < minEdgeClearance) {
+          return false;
+        }
+      } else if (forbidCrossings && segmentsIntersect(pu, pv, px, py)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function canPlaceEdge(
+  u: NodeId,
+  v: NodeId,
+  adjacency: readonly (readonly Edge[])[],
+  positions: readonly Point2D[],
+  minNodeClearance: number,
+  minEdgeClearance: number,
+  maxIncidentCos: number,
+  forbidCrossings = true,
+): boolean {
+  if (!edgeClearsNodes(u, v, positions, minNodeClearance)) return false;
+  if (!edgeHasAngularSeparation(u, v, adjacency, positions, maxIncidentCos)) return false;
+  if (!edgeClearsExistingEdges(u, v, adjacency, positions, minEdgeClearance, forbidCrossings)) {
+    return false;
+  }
+  return true;
+}
+
+function placeGraphVertices(n: number, rng: () => number): Point2D[] {
   const start = 0;
   const goal = n - 1;
   const positions: Point2D[] = new Array<Point2D>(n);
@@ -540,26 +705,34 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
   };
 
   const placed: Point2D[] = [positions[start]!, positions[goal]!];
-  const candidateTries = 16;
+  const candidateTries = 24;
+  const minClearance = minNodeEdgeClearanceForCount(n);
 
   for (let i = 1; i < n - 1; i += 1) {
     let bestPt: Point2D = { x: 16 + rng() * 68, y: 10 + rng() * 80 };
-    let bestMinDistSq = -1;
+    let bestScore = -1;
 
     for (let t = 0; t < candidateTries; t += 1) {
       const cand: Point2D = {
         x: 15 + rng() * 70,
         y: 10 + rng() * 80,
       };
-      let minDistSq = Infinity;
+      let minDist = Infinity;
       for (const other of placed) {
-        const dx = cand.x - other.x;
-        const dy = cand.y - other.y;
-        const dSq = dx * dx + dy * dy;
-        if (dSq < minDistSq) minDistSq = dSq;
+        const d = Math.hypot(cand.x - other.x, cand.y - other.y);
+        if (d < minDist) minDist = d;
       }
-      if (minDistSq > bestMinDistSq) {
-        bestMinDistSq = minDistSq;
+
+      let score = minDist;
+      if (n <= 10) {
+        const segDist = pointToSegmentDistance(cand, positions[start]!, positions[goal]!);
+        if (segDist < minClearance) {
+          score -= (minClearance - segDist) * 0.5;
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
         bestPt = cand;
       }
     }
@@ -568,6 +741,19 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
     placed.push(bestPt);
   }
 
+  return positions;
+}
+
+export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphProblem {
+  const rng = options.rng ?? Math.random;
+  const n = clampRandomNodeCount('graph', options.nodeCount);
+  const directed = options.directed ?? false;
+  const weighted = options.weighted ?? true;
+  const presetId = options.presetId;
+
+  const start = 0;
+  const goal = n - 1;
+  const positions = placeGraphVertices(n, rng);
   const adjacency: Edge[][] = Array.from({ length: n }, () => []);
 
   if (presetId === 'blank-graph') {
@@ -584,8 +770,10 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
   }
 
   const edgeKeys = new Set<string>();
+  const minNodeClearance = minNodeEdgeClearanceForCount(n);
+  const minEdgeClearance = minEdgeEdgeClearanceForCount(n);
 
-  const computeCost = (u: NodeId, v: NodeId): number => {
+  const computePositiveCost = (u: NodeId, v: NodeId): number => {
     const pu = positions[u]!;
     const pv = positions[v]!;
     const dist = Math.hypot(pu.x - pv.x, pu.y - pv.y);
@@ -598,7 +786,7 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
     if (edgeKeys.has(key)) return false;
     edgeKeys.add(key);
 
-    const cost = explicitCost ?? computeCost(u, v);
+    const cost = explicitCost ?? computePositiveCost(u, v);
     adjacency[u]!.push({ node: v, cost });
     if (!directed) {
       adjacency[v]!.push({ node: u, cost });
@@ -621,7 +809,7 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
   } else {
     const isNegativeDag = presetId === 'negative-edge-graph' && directed;
 
-    // Build a proximity-biased spanning tree rooted at Start so every vertex is reachable.
+    // Build a proximity-first spanning tree rooted at Start (EMST-like -> planar & wide angles).
     const inTree: NodeId[] = [start];
     const inTreeMask = new Uint8Array(n);
     inTreeMask[start] = 1;
@@ -641,26 +829,49 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
       }
 
       candidates.sort((a, b) => a.distSq - b.distSq);
-      const nonDirectPool =
+      const nonDirect =
         n >= 4
           ? candidates.filter((c) => !(c.u === start && c.v === goal))
           : candidates;
-      const pool = nonDirectPool.length > 0 ? nonDirectPool : candidates;
-      const topK = Math.min(3, pool.length);
-      const picked = pool[Math.floor(rng() * topK)]!;
+      const basePool = nonDirect.length > 0 ? nonDirect : candidates;
 
+      const filterPool = (
+        nodeClr: number,
+        edgeClr: number,
+        maxCos: number,
+        forbidCross: boolean,
+      ) =>
+        basePool.filter((c) =>
+          canPlaceEdge(c.u, c.v, adjacency, positions, nodeClr, edgeClr, maxCos, forbidCross),
+        );
+
+      let pool = filterPool(minNodeClearance, minEdgeClearance, DEFAULT_MAX_INCIDENT_COS, true);
+      if (pool.length === 0) {
+        pool = filterPool(minNodeClearance * 0.75, minEdgeClearance * 0.75, 0.95, true);
+      }
+      if (pool.length === 0) {
+        pool = filterPool(minNodeClearance * 0.5, minEdgeClearance * 0.5, 0.96, true);
+      }
+      if (pool.length === 0) {
+        pool = basePool;
+      }
+
+      const picked = pool[0]!;
       linkEdge(picked.u, picked.v);
       treeChildren[picked.u]!.push(picked.v);
       inTreeMask[picked.v] = 1;
       inTree.push(picked.v);
     }
 
+    // For negative-edge directed graphs, compute a topological rank from the rooted tree
+    // so every shortcut edge oriented rank[u] < rank[v] preserves strict acyclicity (DAG).
     const rank = new Int32Array(n);
     if (isNegativeDag) {
       const bfsOrder: NodeId[] = [start];
       let head = 0;
       while (head < bfsOrder.length) {
         const u = bfsOrder[head++]!;
+        // Visit goal-bound branches later so goal tends to have higher rank.
         const children = [...treeChildren[u]!].sort((a, b) => {
           if (a === goal) return 1;
           if (b === goal) return -1;
@@ -675,7 +886,6 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
       }
     }
 
-    // Add local shortcut/cycle edges between nearby vertices.
     const nearestCount = Math.min(4, n - 1);
     const extraProb = n <= 16 ? 0.42 : n <= 45 ? 0.3 : 0.22;
 
@@ -697,6 +907,21 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
       for (let k = 0; k < Math.min(nearestCount, neighborsByDist.length); k += 1) {
         if (rng() > extraProb) continue;
         const v = neighborsByDist[k]!.v;
+        if (
+          !canPlaceEdge(
+            u,
+            v,
+            adjacency,
+            positions,
+            minNodeClearance,
+            minEdgeClearance,
+            DEFAULT_MAX_INCIDENT_COS,
+            true,
+          )
+        ) {
+          continue;
+        }
+
         if (!directed) {
           linkEdge(u, v);
         } else if (isNegativeDag) {
@@ -708,7 +933,7 @@ export function randomizeGraph(options: RandomizeGraphOptions): AdjacencyGraphPr
           const useForward = rng() < 0.78 ? forward : !forward;
           const from = useForward ? u : v;
           const to = useForward ? v : u;
-          if (!edgeKeys.has(`${to}->${from}`) || rng() < 0.2) {
+          if (!edgeKeys.has(`${to}->${from}`)) {
             linkEdge(from, to);
           }
         }
