@@ -772,4 +772,30 @@ describe('<App /> UI integration', () => {
       getContextSpy.mockRestore();
     }
   });
+
+  it('supports Hill Climbing Search in Local category with live flags and local-minimum warnings', () => {
+    render(<App />);
+
+    const select = screen.getByRole('combobox', { name: 'Algorithm' });
+    const localGroup = select.querySelector('optgroup[label="Local"]');
+    expect(localGroup).toBeTruthy();
+
+    fireEvent.change(select, { target: { value: 'hill-climbing' } });
+    expect(screen.getByText('src/algorithms/local/hill-climbing.ts')).toBeTruthy();
+
+    // Concave trap: stalls at local minimum (18, 10) and renders flags + local-minimum note.
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    const panelText = document.querySelector('.containers-panel')?.textContent ?? '';
+    expect(panelText).toContain('stuck: true');
+    expect(panelText).toContain('currentH: 10');
+    expect(document.querySelector('.warning-banner')?.textContent).toContain('local minimum');
+
+    // Open field: reaches Goal cleanly with stuck: false.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Problem' }), {
+      target: { value: 'open-field' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+    expect(document.querySelector('.containers-panel')?.textContent).toContain('stuck: false');
+    expect(document.querySelectorAll('.telemetry-value')[1]?.textContent).toBe('25');
+  });
 });

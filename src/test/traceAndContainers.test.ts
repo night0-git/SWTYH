@@ -345,6 +345,7 @@ describe('TracePlayer & ContainerView DOM sync', () => {
       ids: ['Frontier', 'Depth', 'Visited'],
       astar: ['Open', 'Closed'],
       'greedy-best-first': ['Open', 'Visited'],
+      'hill-climbing': [],
     };
 
     for (const [id, labels] of Object.entries(expectedContainers)) {
@@ -360,6 +361,13 @@ describe('TracePlayer & ContainerView DOM sync', () => {
         expect(flags.map((f) => f.name)).toEqual(
           expect.arrayContaining(['limit', 'cutoff', 'depth']),
         );
+      } else if (id === 'hill-climbing') {
+        const flags = player.getFlags();
+        expect(flags.map((f) => f.name)).toEqual(
+          expect.arrayContaining(['stuck', 'currentH', 'bestH']),
+        );
+        // unweighted-graph rounds hop heuristics at Start and its neighbors to 2 (a flat plateau).
+        expect(flags.find((f) => f.name === 'stuck')?.value).toBe(true);
       }
 
       // Reset restores empty containers and clears flags cleanly.

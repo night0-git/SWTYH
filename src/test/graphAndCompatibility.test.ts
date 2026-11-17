@@ -391,6 +391,62 @@ describe('Compatibility analyzer and ground-truth optimality warnings', () => {
       'no-positions-heuristic',
     );
     expect(runAlgorithm(gbfs.search, blankUnreachable).path).toBeNull();
+
+    // 7. Hill Climbing Search: descends strictly on h(n) in O(1) memory, stalls at local minima/plateaus.
+    const hc = getAlgorithm('hill-climbing')!;
+    expect(hc).toBeTruthy();
+    expect(hc.meta.category).toBe('Local');
+
+    const openField = buildPreset('open-field', false);
+    const hcOpen = runAlgorithm(hc.search, openField);
+    expect(hcOpen.error).toBeNull();
+    expect(hcOpen.path?.[0]).toBe(openField.start);
+    expect(hcOpen.path?.[hcOpen.path.length - 1]).toBe(openField.goal);
+    expect(hcOpen.stats.pathCost).toBe(24);
+    expect(evaluateCompatibility(hc, openField, hcOpen).warnings.map((w) => w.code)).toEqual([
+      'non-optimal-strategy',
+    ]);
+
+    const concaveTrap = buildPreset('concave-trap', false);
+    const hcConcave = runAlgorithm(hc.search, concaveTrap);
+    expect(hcConcave.error).toBeNull();
+    expect(hcConcave.path).toBeNull();
+    expect(
+      evaluateCompatibility(hc, concaveTrap, hcConcave).warnings.map((w) => w.code),
+    ).toEqual(
+      expect.arrayContaining(['non-optimal-strategy', 'local-minimum', 'incomplete-result']),
+    );
+
+    const hcDirected = runAlgorithm(hc.search, directed);
+    expect(hcDirected.error).toBeNull();
+    expect(hcDirected.path).toBeNull();
+    expect(
+      evaluateCompatibility(hc, directed, hcDirected).warnings.map((w) => w.code),
+    ).toEqual(
+      expect.arrayContaining(['ignores-weights', 'local-minimum', 'incomplete-result']),
+    );
+
+    const hcWeighted = runAlgorithm(hc.search, weightedGraph);
+    expect(hcWeighted.error).toBeNull();
+    expect(hcWeighted.stats.pathCost).toBe(125);
+    expect(
+      evaluateCompatibility(hc, weightedGraph, hcWeighted).warnings.map((w) => w.code),
+    ).toEqual(
+      expect.arrayContaining(['ignores-weights', 'non-optimal-strategy', 'suboptimal-result']),
+    );
+
+    expect(evaluateCompatibility(hc, negativeGraph, null).warnings.map((w) => w.code)).toContain(
+      'negative-weights',
+    );
+    expect(evaluateCompatibility(hc, coordless, null).warnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['no-positions-heuristic', 'algorithm-incompatibility']),
+    );
+
+    const hcBlank = runAlgorithm(hc.search, blankUnreachable);
+    expect(hcBlank.path).toBeNull();
+    expect(evaluateCompatibility(hc, blankUnreachable, hcBlank).warnings.map((w) => w.code)).not.toContain(
+      'local-minimum',
+    );
   });
 
   it('rounds graph heuristics and scales unweighted graph heuristics by max edge length', () => {
