@@ -3,10 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SWTYH — Search Algorithm Visualizer</title>
+    <title>SWTYH — Search Algorithm Visualizer (BFS, DFS, UCS, A*)</title>
+    <meta
+      name="description"
+      content="Interactive search algorithm visualizer for grids and graphs: step through BFS, DFS, UCS, LCFS, IDS, A*, Greedy Best-First, and Hill Climbing with live code."
+    />
+    <meta
+      name="keywords"
+      content="search algorithm visualizer, pathfinding visualizer, BFS, DFS, UCS, LCFS, IDS, A*, A-star, Greedy Best-First, Hill Climbing, graph search, grid search, computer science"
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="application-name" content="SWTYH" />
+    <meta name="theme-color" content="#f5f4ef" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SWTYH" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="SWTYH — Search Algorithm Visualizer" />
+    <meta
+      property="og:description"
+      content="Interactive search algorithm visualizer for grids and graphs: step through BFS, DFS, UCS, LCFS, IDS, A*, Greedy Best-First, and Hill Climbing with live code."
+    />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="SWTYH — Search Algorithm Visualizer" />
+    <meta
+      name="twitter:description"
+      content="Interactive search algorithm visualizer for grids and graphs: step through BFS, DFS, UCS, LCFS, IDS, A*, Greedy Best-First, and Hill Climbing with live code."
+    />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "SWTYH — Search Algorithm Visualizer",
+        "alternateName": "SWTYH",
+        "description": "Interactive visualizer for uninformed, informed, and local search algorithms on 2D grids, mazes, and weighted or directed graphs with live frontier container state and synchronized textbook code.",
+        "applicationCategory": "EducationalApplication",
+        "operatingSystem": "Any",
+        "browserRequirements": "Requires JavaScript and HTML5 Canvas",
+        "isAccessibleForFree": true,
+        "inLanguage": "en",
+        "featureList": [
+          "Interactive 2D grid, maze, and weighted or directed graph editor",
+          "Step-by-step replay with timeline scrubbing and variable playback speed",
+          "Live Stack, Queue, Priority Queue, and Set frontier inspection",
+          "Synchronized textbook TypeScript source code line highlighting",
+          "Uninformed, informed, and local search algorithms (BFS, DFS, UCS, LCFS, IDS, A*, Greedy Best-First, Hill Climbing)"
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      SWTYH is an interactive search algorithm visualizer for BFS, DFS, UCS, LCFS, IDS, A*,
+      Greedy Best-First, and Hill Climbing on 2D grids and graphs. Enable JavaScript to run the
+      visualizer.
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
